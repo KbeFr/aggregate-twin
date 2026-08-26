@@ -1,0 +1,47 @@
+Aggregate_Twin_Config:
+  Logger_Config:
+    log_level: DEBUG
+    logger_type: terminal
+    include_packages: [core_msgs]
+    format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    terminal: {}
+    file:
+      filename: irsim_twin.log
+    mqtt:
+      broker: "{mqtt_address}"
+      port: 1883
+      topic: logs
+    redis:
+      host: "{redis_address}"
+      port: 6379
+      channel: logs
+      db: 6
+
+  Knowledge_Config:
+    knowledge_type: redis
+    host: "{redis_address}"
+    port: 6379
+    db: 0
+
+  flexCloud_Manager_Config:
+    knowledge_type: redis
+    host: "{redis_address}"
+    port: 6379
+    db: 6
+
+
+  Communication_managers:
+    - Data_Manager_Config:
+        protocol: mqtt
+        broker: "{mqtt_address}"
+        port: 1883
+    - Data_Manager_Config:
+        protocol: redis
+        host: "{redis_address}"
+        port: 6379
+
+  application_Descriptor:
+    # {node_id} is filled in per comm node
+    connectorID_type: static
+    connectorID: "{node_id}@irsim-twin"
+    id: "{node_id}"  # ugv_twin/uav_twin should override this, not share it

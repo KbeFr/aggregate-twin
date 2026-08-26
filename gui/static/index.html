@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet console</title>
+<link rel="stylesheet" href="/theme.css">
+<style>
+  /* layout that belongs to this console only -- tokens live in theme.css */
+  main#world{grid-template-columns:minmax(0,1fr) 330px}
+  main#network{grid-template-columns:minmax(0,1fr) 330px}
+  .stack{display:grid;grid-template-rows:minmax(0,1fr) minmax(140px,38%);min-height:0}
+  .sheet{overflow:auto;min-height:0;border-top:1px solid var(--rule);background:var(--panel-2)}
+  .sheet .eyebrow{padding:12px 16px 0}
+  .strip{display:flex;flex-wrap:wrap;gap:0;border-bottom:1px solid var(--rule)}
+  .strip div{flex:1;min-width:88px;padding:11px 14px;border-right:1px solid var(--rule)}
+  .strip b{display:block;font-family:var(--mono);font-size:17px;font-weight:500;color:var(--text)}
+  .strip span{font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;
+              text-transform:uppercase;color:var(--muted)}
+</style>
+</head>
+<body>
+
+<header>
+  <h1 id="twinName">—<span id="ns"></span></h1>
+  <span class="meter">sim <i id="simTime">0.0</i>s</span>
+  <span class="meter">tick <i id="step">0</i></span>
+  <div class="rail" id="rail">
+    <b data-s="IDLE">idle</b><b data-s="BINDING">binding</b><b data-s="LIVE">live</b>
+  </div>
+</header>
+<div class="banner" id="banner"></div>
+
+<!-- ─── sheet 1 · world ─────────────────────────────────────────────── -->
+<main id="world" class="active">
+  <div class="field">
+    <canvas id="cvWorld"></canvas>
+    <div class="legend">
+      <span><s style="background:var(--signal)"></s>ugv</span>
+      <span><s style="background:var(--uav)"></s>uav</span>
+      <span><s style="background:var(--warn)"></s>obstacle</span>
+      <span><s style="background:var(--goal)"></s>goal</span>
+    </div>
+    <div class="readout" id="readout"></div>
+  </div>
+
+  <aside>
+    <section>
+      <div class="eyebrow">Fleet <u id="fleetCount">0 agents</u></div>
+      <div id="fleetBox"><p class="empty">No agents linked. Waiting for discovery.</p></div>
+    </section>
+
+    <section>
+      <div class="eyebrow">Missions <u id="missionCount">0</u></div>
+      <div id="missionBox"><p class="empty">Nothing dispatched yet.</p></div>
+    </section>
+
+    <section>
+      <div class="eyebrow">Dispatch a mission</div>
+      <div class="fld">
+        <label for="mType">Mission</label>
+        <select id="mType"></select>
+      </div>
+      <div class="fld">
+        <label for="mPosture">Posture</label>
+        <select id="mPosture"></select>
+      </div>
+      <div class="grid2 fld" id="goalFields">
+        <div><label for="mX">Goal x</label><input id="mX" type="number" step="0.1" placeholder="0.0"></div>
+        <div><label for="mY">Goal y</label><input id="mY" type="number" step="0.1" placeholder="0.0"></div>
+      </div>
+      <div class="fld" id="wpField" hidden>
+        <label for="mWaypoints">Waypoints — x,y per line</label>
+        <input id="mWaypoints" placeholder="2,3  4,5">
+      </div>
+      <div class="fld" id="targetField" hidden>
+        <label for="mTarget">Target id</label><input id="mTarget" type="number" placeholder="7">
+      </div>
+      <div class="fld" id="unlockField" hidden>
+        <label for="mUnlock">Unlocks at sim time [s]</label><input id="mUnlock" type="number" step="1" placeholder="30">
+      </div>
+      <div class="grid2 fld">
+        <div><label for="mId">Name</label><input id="mId" placeholder="auto"></div>
+        <div><label for="mBudget">Battery cap %</label><input id="mBudget" type="number" placeholder="none"></div>
+      </div>
+      <div class="grid2">
+        <button class="primary" id="btnDispatch">Dispatch</button>
+        <button id="btnReplan">Replan fleet</button>
+      </div>
+      <p class="empty" id="formNote" style="margin-top:10px">Click the field to pick a goal.</p>
+    </section>
+  </aside>
+</main>
+
+<!-- ─── sheet 2 · network ───────────────────────────────────────────── -->
+<main id="network">
+  <div class="stack">
+    <div class="field">
+      <canvas id="cvNet"></canvas>
+      <div class="legend">
+        <span><s style="background:var(--ok)"></s>live</span>
+        <span><s style="background:var(--warn)"></s>stale</span>
+        <span><s style="background:var(--bad)"></s>silent</span>
+      </div>
+      <div class="readout" id="netReadout"></div>
+    </div>
+    <div class="sheet">
+      <div class="eyebrow">Links <u>per agent, since the twin came up</u></div>
+      <table>
+        <thead><tr>
+          <th>Agent</th><th>Instance</th><th>Phase</th>
+          <th class="num">Discovery</th><th class="num">Instantiate</th><th class="num">Mission</th>
+          <th class="num">twin_state</th><th class="num">Age</th><th class="num">Obstacles</th>
+        </tr></thead>
+        <tbody id="linkRows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <aside>
+    <div class="strip" id="counters"></div>
+    <section>
+      <div class="eyebrow">Protocol log <u id="logCount">0</u></div>
+      <div class="log" id="eventLog"><p class="empty">Quiet so far.</p></div>
+    </section>
+  </aside>
+</main>
+
+<div class="sheets" role="tablist">
+  <button class="tab" id="tabWorld" role="tab" aria-selected="true" data-sheet="world">World</button>
+  <button class="tab" id="tabNet" role="tab" aria-selected="false" data-sheet="network">Network</button>
+  <div class="spacer"></div>
+  <span class="stat" id="footStat"></span>
+</div>
+
+<script src="/app.js"></script>
+<script src="/world.js"></script>
+<script src="/network.js"></script>
+<script>App.boot();</script>
+</body>
+</html>
