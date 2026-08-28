@@ -1,391 +1,325 @@
 """
-A* grid planning.
+a_star_custom.py — grid A* for the aggregate twin.
 
-Collision precedence:
-  1. Grid lookup when ``env_map.grid`` is not ``None``; if occupied, collision.
-  2. When the grid reports free or is unavailable, Shapely vs. obstacle_list.
-  (Grid and obstacle_list are combined when both are present.)
+This module does one thing: search. All geometry (origin, resolution, shape,
+world <-> cell conversion) and all cost (distance, uncertainty, risk) come from
+:class:`GlobalGridMap`; agent physics (energy, time) is not represented here at
+all — it is bid by the instance twin, which owns the battery model.
 
-author: Atsushi Sakai(@Atsushi_twi)
+The only agent property the search uses is the footprint radius, which is
+checked against the map's distance field rather than baked into the occupancy
+grid, so one map serves agents of any size.
+
+author: Atsushi Sakai (@Atsushi_twi)
         Nikos Kanargias (nkana@tee.gr)
-
 adapted by: Reinis Cimurs
-
 further customized for project specific use by: Kobe Frateur
 
-See Wikipedia article (https://en.wikipedia.org/wiki/A*_search_algorithm)
+See https://en.wikipedia.org/wiki/A*_search_algorithm
 """
 
 from __future__ import annotations
 
-import contextlib
 import heapq
 import logging
 import math
+from dataclasses import dataclass
+from typing import Any, Sequence
 
 import numpy as np
 
 from functions.grid_map import GlobalGridMap
 
-from irsim_twin.lib.handler.geometry_handler import GeometryFactory
-from base.irsim_borrowed.util import to_numpy
-from irsim_borrowed.map import Map
-
 logger = logging.getLogger(__name__)
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# Result
+# ══════════════════════════════════════════════════════════════════════════
+
+@dataclass(frozen=True)
+class PlanResult:
+    """Outcome of one search.
+
+    path          : (2, N) world-metre waypoints, ordered start → goal.
+    cost          : posture-weighted cost accumulated by the search.
+    distance      : [m] polyline length — this is what the bid is computed from.
+    min_clearance : [m] tightest squeeze along the path.
+    expanded      : nodes closed; the number to watch when tuning.
+    reason        : why an infeasible plan failed.
+    """
+
+    path: np.ndarray
+    cost: float
+    distance: float = 0.0
+    min_clearance: float = 0.0
+    expanded: int = 0
+    reason: str | None = None
+
+    @property
+    def feasible(self) -> bool:
+        return self.path.shape[1] >= 2 and math.isfinite(self.cost)
+
+    @classmethod
+    def failed(cls, reason: str, expanded: int = 0) -> "PlanResult":
+        return cls(path=np.empty((2, 0)), cost=math.inf, reason=reason, expanded=expanded)
+
+
+def _as_xy(pose: Any) -> tuple[float, float]:
+    """Accepts (2,1)/(3,1) column vectors, flat arrays, tuples or lists."""
+    arr = np.asarray(pose, dtype=float).reshape(-1)
+    if arr.size < 2:
+        raise ValueError(f"pose needs at least x and y, got {pose!r}")
+    return float(arr[0]), float(arr[1])
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Planner
+# ══════════════════════════════════════════════════════════════════════════
+
 class AStarPlannerCustom:
-    def __init__(self, map : Map) -> None:
-        """
-        Initialize A* planner.
+    """8-connected A* over a :class:`GlobalGridMap`."""
 
+    # dx, dy, step multiplier
+    MOTION: tuple[tuple[int, int, float], ...] = (
+        (1, 0, 1.0),
+        (0, 1, 1.0),
+        (-1, 0, 1.0),
+        (0, -1, 1.0),
+        (-1, -1, math.sqrt(2)),
+        (-1, 1, math.sqrt(2)),
+        (1, -1, math.sqrt(2)),
+        (1, 1, math.sqrt(2)),
+    )
+
+    def __init__(
+        self,
+        grid_map: GlobalGridMap,
+        epsilon: float = 1.0,
+        allow_corner_cutting: bool = False,
+    ) -> None:
+        """
         Args:
-            map : live map instance of whole environment used in aggregate twin instance
+            grid_map : the map to plan on; also the source of all geometry.
+            epsilon  : heuristic inflation. 1.0 is optimal; >1 is bounded
+                       suboptimal (cost <= eps * optimal) and expands far fewer
+                       nodes. Note that with eps > 1 the returned costs are no
+                       longer directly comparable between agents, which matters
+                       if you rank candidates on them.
+            allow_corner_cutting : permit diagonal moves that squeeze between
+                       two blocked cells.
         """
+        if epsilon < 1.0:
+            raise ValueError("epsilon must be >= 1.0 to stay bounded-suboptimal")
+        self.gm = grid_map
+        self.epsilon = float(epsilon)
+        self.allow_corner_cutting = bool(allow_corner_cutting)
 
-        self.obstacle_list = map.obstacle_list
-        off = np.asarray(map.world_offset, dtype=float).flatten()
-        self.origin_x = float(off[0])
-        self.origin_y = float(off[1])
-        self.min_x, self.min_y = 0, 0  # grid indices are 0-based
-        self.max_x = self.origin_x + map.width
-        self.max_y = self.origin_y + map.height
-        # When map has a grid, use its actual resolution and shape so planner grid
-        # matches collision lookups (avoids "Open set is empty" on resolution mismatch).
-        grid = getattr(map, "grid", None)
-        gr = None
-        if grid is not None and hasattr(map, "grid_resolution"):
-            with contextlib.suppress(Exception):
-                gr = map.grid_resolution
-        if grid is not None and gr is not None:
-            self.resolution = gr[0]  # m/cell; assume square cells (gr[0]==gr[1])
-            self.x_width = grid.shape[0]
-            self.y_width = grid.shape[1]
-        else:
-            self.resolution = map.resolution
-            self.x_width = round((self.max_x - self.origin_x) / self.resolution)
-            self.y_width = round((self.max_y - self.origin_y) / self.resolution)
-        self.motion = self.get_motion_model()
-
-    class Node:
-        """Node class"""
-
-        def __init__(self, x: int, y: int, cost: float, parent_index: int) -> None:
-            """
-            Initialize Node
-
-            Args:
-                x (float): x position of the node
-                y (float): y position of the node
-                cost (float): heuristic cost of the node
-                parent_index (int): Nodes parent index
-            """
-
-            self.x = x  # index of grid
-            self.y = y  # index of grid
-            self.cost = cost
-            self.parent_index = parent_index
-
-        def __str__(self) -> str:
-            """str function for Node class"""
-            return (
-                    str(self.x)
-                    + ","
-                    + str(self.y)
-                    + ","
-                    + str(self.cost)
-                    + ","
-                    + str(self.parent_index)
-            )
+    # ── public API ────────────────────────────────────────────────────────
 
     def planning(
-            self,
-            start_pose: np.ndarray,
-            goal_pose: np.ndarray,
-            weights,
-            global_grid_map: GlobalGridMap,
-    ) -> tuple[list[float], list[float], float]:
-        """
-        A star path search
+        self,
+        start_pose: Any,
+        goal_pose: Any,
+        weights: Sequence[float],
+        agent_radius: float = 0.0,
+        smooth: bool = False,
+    ) -> PlanResult:
+        """Search for a path from start_pose to goal_pose.
 
         Args:
-            global_grid_map: the grid map object
-            weights: mission weights for planning
-            start_pose (np.array): start pose [x,y]
-            goal_pose (np.array): goal pose [x,y]
-
-        Returns:
-            (np.array): xy position array of the final path
+            start_pose, goal_pose : world-metre (x, y), any array-like.
+            weights      : (Wd, We, Wt, Wu, Wr); only Wd, Wu, Wr are used here.
+            agent_radius : footprint radius [m]; cells with less clearance are
+                           not traversable.
+            smooth       : shortcut the staircase path. `cost` then remains the
+                           pre-smoothing search cost; distance and clearance are
+                           recomputed on the smoothed polyline.
         """
-        start_node = self.Node(
-            self.calc_xy_index(float(to_numpy(start_pose)[0].item()), self.origin_x),
-            self.calc_xy_index(float(to_numpy(start_pose)[1].item()), self.origin_y),
-            0.0,
-            -1,
-        )
-        goal_node = self.Node(
-            self.calc_xy_index(float(to_numpy(goal_pose)[0].item()), self.origin_x),
-            self.calc_xy_index(float(to_numpy(goal_pose)[1].item()), self.origin_y),
-            0.0,
-            -1,
-        )
+        gm = self.gm
 
-        robot_mass = getattr(ugv, 'mass', 1.0)
-        robot_avg_speed = getattr(ugv, 'avg_speed', 1.0)
-        robot_anc_drain = getattr(ugv, 'ancillary_drain', 0)
-        robot_friction = getattr(ugv, 'friction', 0.2)
+        # Bind the derived layers once: GlobalGridMap rebinds on invalidation
+        # rather than mutating, so these stay a consistent snapshot even if
+        # perception updates the map on another thread mid-search.
+        occupied = gm.occupied
+        distance_field = gm.distance_field
+        per_metre, per_cell = gm.cost_layers(weights)
+        c_min = gm.min_cost_per_meter(weights) * self.epsilon
+        resolution = gm.res
+        ny = gm.ny
 
-        print("[A_STAR] Robots mass : " + str(robot_mass))
-        print("[A_STAR] Robots avg_speed : " + str(robot_avg_speed))
-        print("[A_STAR] Robots anc_drain : " + str(robot_anc_drain))
-        print("[A_STAR] Robots friction : " + str(robot_friction))
+        start = gm.world_to_cell(*_as_xy(start_pose))
+        goal = gm.world_to_cell(*_as_xy(goal_pose))
 
-        # Occupancy grid for obstacle checking
-        occ = global_grid_map.occupancy_grid
+        reason = self._validate(start, goal, occupied, distance_field, agent_radius)
+        if reason is not None:
+            logger.debug("[A*] infeasible before search: %s", reason)
+            return PlanResult.failed(reason)
 
-        open_set, closed_set = {}, {}
-        start_n_id = self.calc_grid_index(start_node)
-        open_set[start_n_id] = start_node
+        start_id = start[0] * ny + start[1]
+        goal_id = goal[0] * ny + goal[1]
 
-        # Set up the Priority Queue (Heap)
-        pq = []
-        start_f_cost = start_node.cost + self.calc_heuristic(start_node, goal_node, weights, robot_mass, robot_avg_speed, robot_anc_drain, robot_friction)
-        heapq.heappush(pq, (start_f_cost, start_n_id))
+        g_cost: dict[int, float] = {start_id: 0.0}
+        parent: dict[int, int] = {start_id: -1}
+        closed: set[int] = set()
 
-        while pq:
-            #  retrieval of lowest cost node
-            _current_f, c_id = heapq.heappop(pq)
+        h0 = self._heuristic(start, goal, resolution, c_min)
+        open_heap: list[tuple[float, float, int]] = [(h0, h0, start_id)]
 
-            if c_id in closed_set:
+        found = False
+        while open_heap:
+            _f, _h, current_id = heapq.heappop(open_heap)
+            if current_id in closed:
                 continue
+            closed.add(current_id)
 
-            if c_id not in open_set:
-                continue
-
-            current = open_set[c_id]
-
-
-            if current.x == goal_node.x and current.y == goal_node.y:
-                print("Find goal")
-                goal_node.parent_index = current.parent_index
-                goal_node.cost = current.cost
+            if current_id == goal_id:
+                found = True
                 break
 
-            # Remove the item from the open set
-            del open_set[c_id]
+            cx, cy = divmod(current_id, ny)
+            current_g = g_cost[current_id]
 
-            # Add it to the closed set
-            closed_set[c_id] = current
+            for dx, dy, step in self.MOTION:
+                gx, gy = cx + dx, cy + dy
 
-            # expand_grid search grid based on motion model
-            for i, _ in enumerate(self.motion):
+                if not gm.in_bounds(gx, gy):
+                    continue
+                if occupied[gx, gy]:
+                    continue
+                if distance_field[gx, gy] < agent_radius:
+                    continue  # robot does not fit
+                if dx and dy and not self.allow_corner_cutting:
+                    if occupied[cx + dx, cy] or occupied[cx, cy + dy]:
+                        continue
 
-                # Calculate the target cell coordinates
-                nx = current.x + self.motion[i][0]
-                ny = current.y + self.motion[i][1]
-
-                # fast bound checking
-                if nx < 0 or ny < 0 or nx >= self.x_width or ny >= self.y_width:
+                neighbour_id = gx * ny + gy
+                if neighbour_id in closed:
                     continue
 
-                # occupancy grid check
-                if occ[nx,ny] > 50:
-                    continue
-
-                # Convert the grid step (1 or 1.414) into physical meters
-                step_dist = self.motion[i][2] * self.resolution
-
-                # calc cost
-                move_cost = global_grid_map.cell_cost(
-                    gx=nx,
-                    gy=ny,
-                    step_dist=step_dist,
-                    weights=weights,
-                    robot_mass=robot_mass,
-                    v_avg=robot_avg_speed,
-                    Ka=robot_anc_drain,
-                    Ku=robot_friction,
+                step_dist = step * resolution
+                tentative = current_g + float(
+                    per_metre[gx, gy] * step_dist + per_cell[gx, gy]
                 )
-
-                if math.isinf(move_cost):
+                if tentative >= g_cost.get(neighbour_id, math.inf):
                     continue
 
-                # Create the valid neighbor node using the cumulative cost
-                node = self.Node(
-                    nx,
-                    ny,
-                    current.cost + move_cost,
-                    c_id,
-                )
-                n_id = self.calc_grid_index(node)
+                g_cost[neighbour_id] = tentative
+                parent[neighbour_id] = current_id
+                h = self._heuristic((gx, gy), goal, resolution, c_min)
+                # h is the tie-break key: on equal f, lean toward the goal.
+                heapq.heappush(open_heap, (tentative + h, h, neighbour_id))
 
-                if n_id in closed_set:
-                    continue
+        if not found:
+            logger.debug("[A*] open set exhausted after %d expansions", len(closed))
+            return PlanResult.failed("unreachable", expanded=len(closed))
 
-                if n_id not in open_set or open_set[n_id].cost > node.cost:
-                    open_set[n_id] = node  # discovered a new node or found better path
+        cells = self._trace(goal_id, parent, ny)
+        if smooth:
+            cells = self._shortcut(cells, distance_field, agent_radius)
 
-                    # Calculate new F-cost and push to heap
-                    f_cost = node.cost + self.calc_heuristic(node, goal_node, weights, robot_mass, robot_avg_speed, robot_anc_drain, robot_friction)
-                    heapq.heappush(pq, (f_cost, n_id))
-
-        rx, ry, global_cost = self.calc_final_path(goal_node, closed_set)
-
-        return np.array([rx, ry]), global_cost
-
-    def calc_final_path(
-            self, goal_node: Node, closed_set: dict
-    ) -> tuple[list[float], list[float], float]:
-        """Generate the final path
-
-        Args:
-            goal_node (Node): final goal node
-            closed_set (dict): dict of closed nodes
-
-        Returns:
-            rx (list): list of x positions of final path
-            ry (list): list of y positions of final path
-            total_cost (float): exact final cumulative path cost
-        """
-        rx, ry = (
-            [self.calc_grid_position(goal_node.x, self.origin_x)],
-            [self.calc_grid_position(goal_node.y, self.origin_y)],
+        path = self._to_world(cells)
+        return PlanResult(
+            path=path,
+            cost=float(g_cost[goal_id]),
+            distance=self.path_length(path),
+            min_clearance=float(min(distance_field[cx, cy] for cx, cy in cells)),
+            expanded=len(closed),
         )
-        total_cost = goal_node.cost
-        parent_index = goal_node.parent_index
-        while parent_index != -1:
-            n = closed_set[parent_index]
-            rx.append(self.calc_grid_position(n.x, self.origin_x))
-            ry.append(self.calc_grid_position(n.y, self.origin_y))
-            parent_index = n.parent_index
-
-        return rx, ry, total_cost
-
-    def calc_heuristic(
-            self,
-            n1: Node,
-            n2: Node,
-            weights: tuple,
-            robot_mass: float,
-            v_avg: float,
-            Ka: float,
-            Ku: float
-    ) -> float:
-        """
-        Admissible optimal heuristic tailored to multi-objective cost map.
-        Calculates absolute theoretical minimum cost per meter (c_min) to maintain
-        mathematical perfection while boosting search directionality.
-        """
-        # Physical distance in meters
-        distance = math.hypot(n1.x - n2.x, n1.y - n2.y) * self.resolution
-
-        Wd, We, Wt, Wu,_Wr = weights
-
-        g = 9.81
-        v = max(v_avg, 1e-6)
-
-        # Minimum potential traversal costs per meter
-        min_energy_per_m = We * (2.0 * Ku * robot_mass * g + (Ka / v))
-        min_time_per_m = Wt * (1.0 / v)
-        min_uncert_per_m = Wu * 0.02 # Assumes covered value
-
-        # Absolute minimal possible cost
-        c_min = Wd + min_energy_per_m + min_time_per_m + min_uncert_per_m
-
-        return distance * c_min
-
-    def calc_grid_position(self, index: int, min_position: float) -> float:
-        """
-        calc grid position
-
-        Args:
-            index (int): index of a node
-            min_position (float): min value of search space
-
-        Returns:
-            (float): position of coordinates along the given axis
-        """
-        return index * self.resolution + min_position
-
-    def calc_xy_index(self, position: float, min_pos: float) -> int:
-        """
-        calc xy index of node
-
-        Args:
-            position (float): position of a node
-            min_pos (float): min value of search space
-
-        Returns:
-            (int): index of position along the given axis
-        """
-        return round((position - min_pos) / self.resolution)
-
-    def calc_grid_index(self, node: Node) -> int:
-        """
-        calc grid index of node
-
-        Args:
-            node (Node): node to calculate the index for
-
-        Returns:
-            (float): grid index of the node
-        """
-        return (node.y - self.min_y) * self.x_width + (node.x - self.min_x)
-
-    def verify_node(self, node: Node) -> bool:
-        """
-        Check if node is acceptable - within limits of search space and free of collisions
-
-        Args:
-            node (Node): node to check
-
-        Returns:
-            (bool): True if node is acceptable. False otherwise
-        """
-        px = self.calc_grid_position(node.x, self.origin_x)
-        py = self.calc_grid_position(node.y, self.origin_y)
-
-        if (
-                px < self.origin_x
-                or py < self.origin_y
-                or px >= self.max_x
-                or py >= self.max_y
-        ):
-            return False
-
-        # collision check
-        return not self.check_node(px, py)
-
-    def check_node(self, x: float, y: float) -> bool:
-        """Check position for a collision.
-
-        Args:
-            x: World x coordinate of the cell centre.
-            y: World y coordinate of the cell centre.
-
-        Returns:
-            ``True`` if a collision is detected.
-        """
-        node_position = [x, y]
-        shape = {
-            "name": "rectangle",
-            "length": self.resolution,
-            "width": self.resolution,
-        }
-        gf = GeometryFactory.create_geometry(**shape)
-        geometry = gf.step(np.c_[node_position])
-        return self._map.is_collision(geometry)
 
     @staticmethod
-    def get_motion_model() -> list[list[float]]:
-        # dx, dy, cost
-        return [
-            [1, 0, 1],
-            [0, 1, 1],
-            [-1, 0, 1],
-            [0, -1, 1],
-            [-1, -1, math.sqrt(2)],
-            [-1, 1, math.sqrt(2)],
-            [1, -1, math.sqrt(2)],
-            [1, 1, math.sqrt(2)],
-        ]
+    def path_length(path: np.ndarray) -> float:
+        """Polyline length [m] of a (2, N) path."""
+        if path.ndim != 2 or path.shape[1] < 2:
+            return 0.0
+        return float(np.hypot(np.diff(path[0]), np.diff(path[1])).sum())
+
+    # ── internals ─────────────────────────────────────────────────────────
+
+    def _validate(
+        self,
+        start: tuple[int, int],
+        goal: tuple[int, int],
+        occupied: np.ndarray,
+        distance_field: np.ndarray,
+        agent_radius: float,
+    ) -> str | None:
+        """Reject hopeless queries before expanding anything.
+
+        Without the region test an unreachable goal costs a full-map expansion,
+        which matters when candidate selection runs K searches per mission.
+        """
+        gm = self.gm
+        for name, cell in (("start", start), ("goal", goal)):
+            if not gm.in_bounds(*cell):
+                return f"{name}_out_of_bounds"
+            if occupied[cell]:
+                return f"{name}_occupied"
+            if distance_field[cell] < agent_radius:
+                return f"{name}_too_tight"
+        if not gm.reachable(start, goal):
+            return "disconnected"
+        return None
+
+    @staticmethod
+    def _heuristic(
+        cell: tuple[int, int],
+        goal: tuple[int, int],
+        resolution: float,
+        c_min_per_metre: float,
+    ) -> float:
+        """Straight-line distance times the cheapest possible cost per metre.
+
+        Admissible as long as `c_min_per_metre` really is the floor of what
+        GlobalGridMap.cell_cost can charge — which is why that bound lives in
+        the map, next to the cost function it has to track.
+        """
+        d = math.hypot(cell[0] - goal[0], cell[1] - goal[1]) * resolution
+        return d * c_min_per_metre
+
+    @staticmethod
+    def _trace(goal_id: int, parent: dict[int, int], ny: int) -> list[tuple[int, int]]:
+        """Walk parents back from the goal and return cells start → goal."""
+        cells: list[tuple[int, int]] = []
+        node = goal_id
+        while node != -1:
+            cells.append(divmod(node, ny))
+            node = parent[node]
+        cells.reverse()
+        return cells
+
+    def _to_world(self, cells: Sequence[tuple[int, int]]) -> np.ndarray:
+        pts = [self.gm.cell_to_world(cx, cy) for cx, cy in cells]
+        return np.array(pts, dtype=float).T if pts else np.empty((2, 0))
+
+    def _shortcut(
+        self,
+        cells: list[tuple[int, int]],
+        distance_field: np.ndarray,
+        agent_radius: float,
+    ) -> list[tuple[int, int]]:
+        """String-pull the 8-connected staircase into straight segments."""
+        if len(cells) < 3:
+            return cells
+        out = [cells[0]]
+        i = 0
+        while i < len(cells) - 1:
+            j = len(cells) - 1
+            while j > i + 1 and not self._line_clear(cells[i], cells[j],
+                                                     distance_field, agent_radius):
+                j -= 1
+            out.append(cells[j])
+            i = j
+        return out
+
+    @staticmethod
+    def _line_clear(
+        a: tuple[int, int],
+        b: tuple[int, int],
+        distance_field: np.ndarray,
+        agent_radius: float,
+    ) -> bool:
+        n = max(abs(b[0] - a[0]), abs(b[1] - a[1])) + 1
+        xs = np.rint(np.linspace(a[0], b[0], n)).astype(int)
+        ys = np.rint(np.linspace(a[1], b[1], n)).astype(int)
+        return bool((distance_field[xs, ys] >= agent_radius).all())

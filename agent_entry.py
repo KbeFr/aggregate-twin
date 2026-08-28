@@ -18,6 +18,8 @@ class AgentEntry:
 
     kind: AgentKind
 
+    radius : float
+
     # -- From TwinState
     state: State2D = field(default_factory=State2D)
     velocity: Velocity2D = field(default_factory=Velocity2D)
