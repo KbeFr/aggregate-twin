@@ -111,7 +111,7 @@ def _sim_time(twin) -> float:
 
 
 def _header(twin, monitor: CommMonitor) -> dict:
-    linked = len(twin._agent_to_instance)
+    linked = twin.fleet.amount_linked()
     return {
         "name": getattr(twin, "name", "AggregateTwin"),
         "namespace": getattr(twin, "namespace", "—"),
@@ -153,10 +153,10 @@ def _world_state(twin, monitor: CommMonitor) -> dict:
         })
 
     obstacles = [_obstacle(o, "world") for o in wc.static_obstacles]
-    for agent_name, obs in twin._instance_obstacles.items():
-        for o in (obs if isinstance(obs, (list, tuple, set)) else [obs]):
-            if o is not None:
-                obstacles.append(_obstacle(o, agent_name))
+    for reports in twin.obstacles.all_reports():
+        for report in reports:
+            if report.obs is not None and report.reporter is not None:
+                obstacles.append(_obstacle(report.obs, report.reporter))
 
     missions = []
     for m in twin.missions:
@@ -171,7 +171,7 @@ def _world_state(twin, monitor: CommMonitor) -> dict:
             "unlock_time": m.unlock_time,
             "assigned": m.assigned_ugv,
             "cost": None if m.last_cost in (None, float("inf")) else round(float(m.last_cost), 2),
-            "in_flight": m.mission_id in twin._mission_in_flight,
+            "in_flight": m.mission_id in twin.missions_in_flight,
         })
 
     return {
@@ -200,7 +200,7 @@ def _network_state(twin, monitor: CommMonitor, gateway) -> dict:
 
     for name, peer in sorted(monitor.peers.items()):
         state = monitor.link_state(peer, stale_after)
-        instance = peer.instance or twin._agent_to_instance.get(name)
+        instance = peer.instance or twin.fleet.instance_of.get(name)
         ts, obs = peer.ch["twin_state"], peer.ch["obstacle"]
 
         if instance:
@@ -232,7 +232,7 @@ def _network_state(twin, monitor: CommMonitor, gateway) -> dict:
         "peers": len(monitor.peers),
         "linked": sum(1 for r in rows if r["phase"] == "linked"),
         "silent": sum(1 for r in rows if r["state"] in ("silent", "stale")),
-        "in_flight": len(twin._mission_in_flight),
+        "in_flight": len(twin.missions_in_flight),
         "planning": aggregate["planning"],
         "stale_after": stale_after,
         "planner_error": gateway.last_error,

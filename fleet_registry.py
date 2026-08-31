@@ -97,3 +97,6 @@ class FleetRegistry:
 
     def instance_of(self, agent_name: str) -> str | None:
         return self._agent_to_instance.get(agent_name)
+
+    def amount_linked(self) -> int:
+        return len(self._agents)

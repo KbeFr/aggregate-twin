@@ -237,18 +237,18 @@ class CommMonitor:
         self.log("out", "mission", agent_name, f"CANCEL · {mission_id}", "warn")
 
     def _on_mission_reply(self, instance_name, payload=None, *a, **k) -> None:
-        agent = self.twin._instance_to_agent.get(instance_name, instance_name)
+        agent = self.twin.fleet.agent_of(instance_name)
         self.peer(agent).ch["mission_in"].hit()
         self.log("in", "mission", agent, "reply", "ok")
 
     def _on_twin_state(self, instance_name, payload=None, *a, **k) -> None:
-        agent = self.twin._instance_to_agent.get(instance_name)
+        agent = self.twin.fleet.agent_of(instance_name)
         if agent:
             self.peer(agent).ch["twin_state"].hit()
             self.msgs_in += 1
 
     def _on_obstacle(self, instance_name, payload=None, *a, **k) -> None:
-        agent = self.twin._instance_to_agent.get(instance_name)
+        agent = self.twin.fleet.agent_of(instance_name)
         if agent:
             self.peer(agent).ch["obstacle"].hit()
             self.msgs_in += 1
@@ -287,7 +287,7 @@ class MissionGateway:
         threading.Thread(target=self._watch, name="gui-planner", daemon=True).start()
 
     def submit(self, mission) -> None:
-        self.twin.missions_to_deploy.append(mission)
+        self.twin.add_mission(mission)
         self.monitor.log("out", "mission", mission.assigned_ugv or "planner",
                          f"queued · {mission.mission_id}")
 
@@ -311,11 +311,11 @@ class MissionGateway:
         while not self._stop.wait(self.poll):
             try:
                 t = self.twin
-                if t.missions_to_deploy or t._is_planning_active:
+                if t.missions or t._is_planning_active:
                     continue
                 waiting = [m for m in t.missions
                            if m.mission_status == MissionStatus.PENDING
-                           and m.mission_id not in t._mission_in_flight]
+                           and m.mission_id not in t.missions_in_flight]
                 if not waiting or not t.fleet.all(include_stale=True):
                     continue
                 ugvs = _ugv_list(t)

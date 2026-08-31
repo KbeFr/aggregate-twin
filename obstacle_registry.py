@@ -47,7 +47,7 @@ class ObstacleRegistry:
     def all_reports(self) -> list[ObstacleReport]:
         return [r for d in self._reports.values() for r in d.values()]
 
-    def observations(self) -> list:
+    def observations(self) -> list[ObstacleObservation]:
         """Flat list for GlobalGridMap.update_perception()."""
         return [r.obs for r in self.all_reports()]
 

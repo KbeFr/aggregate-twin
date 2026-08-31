@@ -68,6 +68,7 @@ class MissionPlanner:
                 }))
         return out
 
+
     def get_winner(self, mission, bids, hints : dict[str, MissionPlanHint]) -> str | None:
         Wd, We, Wt, _Wu, _Wr = POSTURE_WEIGHTS[mission.mission_posture]
         floor = mission.battery_threshold if mission.battery_threshold is not None \
