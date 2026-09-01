@@ -43,12 +43,12 @@
   }
 
   function obstacles(ctx, list) {
-    list.forEach(o => {
+    (list || []).forEach(o => {
       const alpha = 0.25 + 0.5 * (o.confidence ?? 1);
       ctx.lineWidth = 1.2;
       ctx.strokeStyle = o.dynamic ? `rgba(224,104,95,${alpha})` : `rgba(224,160,64,${alpha})`;
       ctx.fillStyle = o.dynamic ? 'rgba(224,104,95,.12)' : 'rgba(224,160,64,.14)';
-      ctx.setLineDash(o.confidence < 1 ? [4, 3] : []);
+      ctx.setLineDash((o.confidence ?? 1) < 1 ? [4, 3] : []);
       ctx.beginPath();
       if (o.polygon && o.polygon.length > 2) {
         o.polygon.forEach((p, i) => i ? ctx.lineTo(T.toX(p[0]), T.toY(p[1]))
@@ -61,24 +61,30 @@
     });
   }
 
+  /* `path` is optional -- the aggregate only sends it when the planner has a
+     route to publish. Reading `.length` off an absent key was what produced
+     "Lost the aggregate twin" the moment the first instance came up. */
   function paths(ctx, agents) {
-    agents.forEach(a => {
-      if (!a.path.length) return;
+    (agents || []).forEach(a => {
+      const pts = a.path;
+      if (!Array.isArray(pts) || pts.length < 2) return;
       const hot = !selected || selected === a.name;
       ctx.lineWidth = hot ? 1.8 : 1;
       ctx.strokeStyle = hot ? 'rgba(127,209,222,.75)' : 'rgba(127,209,222,.2)';
       ctx.beginPath();
-      a.path.forEach((p, i) => i ? ctx.lineTo(T.toX(p[0]), T.toY(p[1]))
-                                 : ctx.moveTo(T.toX(p[0]), T.toY(p[1])));
+      pts.forEach((p, i) => i ? ctx.lineTo(T.toX(p[0]), T.toY(p[1]))
+                              : ctx.moveTo(T.toX(p[0]), T.toY(p[1])));
       ctx.stroke();
     });
   }
 
   function goals(ctx, missions) {
     ctx.font = '10px ui-monospace, monospace';
-    missions.forEach(m => {
-      const pts = m.goal ? [m.goal] : m.waypoints;
+    (missions || []).forEach(m => {
+      const wps = m.waypoints || [];
+      const pts = m.goal ? [m.goal] : wps;
       pts.forEach((g, i) => {
+        if (!g || g.length < 2) return;
         const x = T.toX(g[0]), y = T.toY(g[1]);
         const live = m.status === 'ACTIVE';
         ctx.strokeStyle = live ? C('--goal') : 'rgba(217,123,166,.45)';
@@ -88,7 +94,7 @@
         ctx.moveTo(x - 11, y); ctx.lineTo(x + 11, y);
         ctx.moveTo(x, y - 11); ctx.lineTo(x, y + 11); ctx.stroke();
         ctx.fillStyle = live ? C('--goal') : 'rgba(217,123,166,.55)';
-        ctx.fillText(m.waypoints.length > 1 ? `${m.id}·${i + 1}` : m.id, x + 13, y - 6);
+        ctx.fillText(wps.length > 1 ? `${m.id}·${i + 1}` : m.id, x + 13, y - 6);
       });
     });
     if (picked) {
@@ -98,17 +104,19 @@
     }
   }
 
+  const DEFAULT_SHAPE = { type: 'rect', length: 0.44, width: 0.30 };
+
   function footprint(ctx, a, colour) {
-    const s = a.shape, k = T.scale;
+    const s = a.shape || DEFAULT_SHAPE, k = T.scale;
     ctx.beginPath();
-    if (s.type === 'polygon') {
+    if (s.type === 'polygon' && Array.isArray(s.points)) {
       s.points.forEach((p, i) => i ? ctx.lineTo(p[0] * k, -p[1] * k) : ctx.moveTo(p[0] * k, -p[1] * k));
       ctx.closePath();
     } else if (s.type === 'rect') {
-      const l = Math.max(s.length * k, 8), w = Math.max(s.width * k, 6);
+      const l = Math.max((s.length || 0.44) * k, 8), w = Math.max((s.width || 0.30) * k, 6);
       ctx.rect(-l / 2, -w / 2, l, w);
     } else if (s.type === 'rotor') {
-      const r = Math.max(s.radius * k, 7);
+      const r = Math.max((s.radius || 0.30) * k, 7);
       ctx.arc(0, 0, r * .38, 0, Math.PI * 2);
       ctx.moveTo(-r, -r); ctx.lineTo(r, r); ctx.moveTo(r, -r); ctx.lineTo(-r, r);
       [[-r, -r], [r, r], [r, -r], [-r, r]].forEach(([x, y]) => {
@@ -123,15 +131,17 @@
 
   function agents(ctx, list) {
     ctx.font = '10px ui-monospace, monospace';
-    list.forEach(a => {
-      const x = T.toX(a.x), y = T.toY(a.y);
-      const colour = a.stale ? C('--dim') : (a.kind.toLowerCase().endsWith('uav') ? C('--uav') : C('--signal'));
+    (list || []).forEach(a => {
+      const x = T.toX(a.x || 0), y = T.toY(a.y || 0);
+      const kind = String(a.kind || 'ugv').toLowerCase();
+      const colour = a.stale ? C('--dim') : (kind.endsWith('uav') ? C('--uav') : C('--signal'));
+      const shape = a.shape || DEFAULT_SHAPE;
       ctx.save();
-      ctx.translate(x, y); ctx.rotate(-a.theta);
+      ctx.translate(x, y); ctx.rotate(-(a.theta || 0));
       footprint(ctx, a, colour);
-      if (a.shape.type !== 'rotor') {                       // heading tick
+      if (shape.type !== 'rotor') {                         // heading tick
         ctx.beginPath(); ctx.moveTo(0, 0);
-        ctx.lineTo(Math.max((a.shape.length || a.shape.radius || .3) * T.scale, 9), 0);
+        ctx.lineTo(Math.max((shape.length || shape.radius || .3) * T.scale, 9), 0);
         ctx.strokeStyle = colour; ctx.lineWidth = 1.4; ctx.stroke();
       }
       ctx.restore();
@@ -146,7 +156,7 @@
       }
       ctx.fillStyle = a.stale ? C('--muted') : C('--text');
       ctx.fillText(a.name, x + 14, y + 4);
-      if (a.battery !== null) {
+      if (a.battery !== null && a.battery !== undefined) {
         ctx.fillStyle = a.battery < 25 ? C('--bad') : C('--muted');
         ctx.fillText(pct(a.battery), x + 14, y + 15);
       }
@@ -156,7 +166,7 @@
   /* ---- draw ----------------------------------------------------------- */
   function draw() {
     const { ctx, w, h } = surface(cv);
-    if (!snap) return;
+    if (!snap || !snap.world) return;
     T = fit(snap.world, w, h);
     const step = grid(ctx, snap.world, w, h);
     obstacles(ctx, snap.obstacles);
@@ -164,22 +174,24 @@
     goals(ctx, snap.missions);
     agents(ctx, snap.agents);
 
-    const sel = snap.agents.find(a => a.name === selected);
+    const list = snap.agents || [];
+    const sel = list.find(a => a.name === selected);
     $('readout').innerHTML = sel
       ? `${esc(sel.name)}  x <em>${n(sel.x)}</em>  y <em>${n(sel.y)}</em>  θ <em>${n(sel.theta)}</em>\n` +
         `v <em>${n(sel.v)}</em>  ω <em>${n(sel.w)}</em>  ·  telemetry <em>${n(sel.age, 1)}s</em> old`
-      : `${snap.agents.length} agent(s) · ${snap.obstacles.length} obstacle(s) · 1 square = ${step} m`;
+      : `${list.length} agent(s) · ${(snap.obstacles || []).length} obstacle(s) · 1 square = ${step} m`;
   }
 
   /* ---- side panels ---------------------------------------------------- */
   function fleet(list) {
+    list = list || [];
     $('fleetCount').textContent = `${list.length} agent${list.length === 1 ? '' : 's'}`;
     $('fleetBox').innerHTML = list.length ? list.map(a => `
       <div class="row${selected === a.name ? ' sel' : ''}" data-agent="${esc(a.name)}"
            data-state="${a.stale ? 'stale' : 'live'}" style="cursor:pointer">
         <div class="hd"><span>${esc(a.name)}</span><span class="tag">${esc(a.kind)}</span></div>
         <div class="sub"><span>${n(a.x)}, ${n(a.y)}</span>
-          <span class="${a.battery !== null && a.battery < 25 ? 'error' : ''}">${pct(a.battery)}</span></div>
+          <span class="${a.battery != null && a.battery < 25 ? 'error' : ''}">${pct(a.battery)}</span></div>
         <div class="sub"><span>${esc(a.instance || 'no instance')}</span>
           <span>${a.arrived ? 'arrived' : (a.mission_id ? esc(a.mission_id) : 'idle')}</span></div>
       </div>`).join('')
@@ -192,6 +204,7 @@
   }
 
   function missions(list) {
+    list = list || [];
     $('missionCount').textContent = list.length;
     const cls = { ACTIVE: 'ok', PENDING: 'info', FAILED: 'error', CANCELLED: 'warn', COMPLETE: 'ok' };
     $('missionBox').innerHTML = list.length ? list.map(m => `
@@ -199,9 +212,9 @@
         <div class="hd"><span>${esc(m.id)}</span>
           <span class="tag ${cls[m.status] || ''}">${esc(m.status)}</span></div>
         <div class="sub"><span>${esc(m.type)} · ${esc(m.posture)}</span>
-          <span>${m.goal ? m.goal.map(v => n(v, 1)).join(', ') : m.waypoints.length + ' wp'}</span></div>
+          <span>${m.goal ? m.goal.map(v => n(v, 1)).join(', ') : (m.waypoints || []).length + ' wp'}</span></div>
         <div class="sub"><span>${esc(m.assigned || 'unassigned')}${m.in_flight ? ' · handshake' : ''}</span>
-          <span>${m.cost === null ? '—' : 'cost ' + m.cost}</span></div>
+          <span>${m.cost === null || m.cost === undefined ? '—' : 'cost ' + m.cost}</span></div>
         <div class="sub"><span></span>
           <button class="ghost" data-cancel="${esc(m.id)}">Cancel</button></div>
       </div>`).join('')
@@ -220,10 +233,10 @@
   }
 
   function fillOptions(o) {
-    if (optionsDone) return;
+    if (optionsDone || !o || !o.types || !o.postures) return;
     $('mType').innerHTML = o.types.map(t => `<option>${t}</option>`).join('');
     $('mPosture').innerHTML = o.postures.map(p => `<option>${p}</option>`).join('');
-    $('mPosture').value = 'COVERAGE';
+    if (o.postures.includes('COVERAGE')) $('mPosture').value = 'COVERAGE';
     $('mType').onchange = typeChanged;
     typeChanged();
     optionsDone = true;

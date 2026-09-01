@@ -1,9 +1,9 @@
 # **************************************************************************
 # * aggregate_gui.py -- fleet console for the aggregate twin
 # *
-# * Read-only over the twin's public state, plus one write path: dispatching
-# * a mission, which goes through the twin's normal deploy queue → planner →
-# * mission handshake. Start it next to the twin and it stays out of the way:
+# * Read-only over the twin's public state, plus three write paths (dispatch,
+# * cancel, release) which are queued onto the twin's inbox so they execute on
+# * the step thread rather than on an HTTP worker.
 # *
 # *     from gui.aggregate_gui import start_gui
 # *     start_gui(twin, port=8081)
@@ -26,10 +26,6 @@ logger.setLevel(logging.INFO)
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 MAX_PATH_POINTS = 160
 
-# Shared look and feel ships inside core_msgs (installed with `pip install -e
-# core_msgs/` per the Dockerfile), so every node -- aggregate or instance --
-# serves the same theme.css from its own process without depending on any
-# other node's container being up.
 try:
     import core_msgs
     SHARED_STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(core_msgs.__file__)), "gui")
@@ -77,7 +73,13 @@ def _vel(velocity) -> tuple[float, float]:
 
 
 def _path_points(arr) -> list[list[float]]:
-    """A* returns np.array([rx, ry]) goal-first; thin it and hand back [x, y] pairs."""
+    """A* returns np.array([rx, ry]) goal-first; thin it and hand back [x, y] pairs.
+
+    Always returns a list. The console reads `agent.path` unconditionally, so
+    this must never be None.
+    """
+    if arr is None:
+        return []
     try:
         xs, ys = arr[0], arr[1]
     except Exception:
@@ -90,6 +92,30 @@ def _path_points(arr) -> list[list[float]]:
     if pts and stride > 1:
         pts.append([float(xs[n - 1]), float(ys[n - 1])])
     return pts
+
+
+def _agent_path(twin, agent_name: str) -> list[list[float]]:
+    """Best available route for this agent.
+
+    `_active_paths` went away with the planner executor, so fall back to the
+    winning MissionPlanHint held by the agent's live session -- that is exactly
+    the route the agent was handed at award time.
+    """
+    active = getattr(twin, "_active_paths", None)
+    if isinstance(active, dict) and agent_name in active:
+        return _path_points(active[agent_name])
+
+    for session in getattr(twin, "_mission_sessions", {}).values():
+        if session.committed_agent != agent_name:
+            continue
+        hint = session.hints.get(agent_name)
+        pts = getattr(hint, "path", None)
+        if pts:
+            try:
+                return [[float(p[0]), float(p[1])] for p in pts][:MAX_PATH_POINTS]
+            except Exception:
+                return []
+    return []
 
 
 def _obstacle(o, source: str) -> dict:
@@ -149,14 +175,17 @@ def _world_state(twin, monitor: CommMonitor) -> dict:
             "age": round(entry.age, 2),
             "stale": entry.age > stale_after,
             "shape": shape_of(peer.discovery if peer else None, kind),
-            "path": _path_points(twin._active_paths.get(entry.name)),
+            "path": _agent_path(twin, entry.name),
         })
 
-    obstacles = [_obstacle(o, "world") for o in wc.static_obstacles]
-    for reports in twin.obstacles.all_reports():
-        for report in reports:
-            if report.obs is not None and report.reporter is not None:
-                obstacles.append(_obstacle(report.obs, report.reporter))
+    obstacles = [_obstacle(o, "world") for o in getattr(wc, "static_obstacles", []) or []]
+    # all_reports() is already flat -- one ObstacleReport per entry.
+    for report in twin.obstacles.all_reports():
+        if report.obs is not None and report.reporter is not None:
+            obstacles.append(_obstacle(report.obs, report.reporter))
+
+    # missions_in_flight holds Mission objects, so compare ids, not the objects.
+    in_flight_ids = {m.mission_id for m in twin.missions_in_flight}
 
     missions = []
     for m in twin.missions:
@@ -171,7 +200,7 @@ def _world_state(twin, monitor: CommMonitor) -> dict:
             "unlock_time": m.unlock_time,
             "assigned": m.assigned_ugv,
             "cost": None if m.last_cost in (None, float("inf")) else round(float(m.last_cost), 2),
-            "in_flight": m.mission_id in twin.missions_in_flight,
+            "in_flight": m.mission_id in in_flight_ids,
         })
 
     return {
@@ -198,9 +227,11 @@ def _network_state(twin, monitor: CommMonitor, gateway) -> dict:
               "state": "live", "detail": f"{aggregate['loop_hz']} Hz · {aggregate['linked']} linked"}]
     links, rows = [], []
 
-    for name, peer in sorted(monitor.peers.items()):
+    # key=str so a stray non-string key can never break the sort, and snapshot
+    # under the monitor's lock because twin callbacks mutate peers concurrently.
+    for name, peer in sorted(monitor.snapshot(), key=lambda kv: str(kv[0])):
         state = monitor.link_state(peer, stale_after)
-        instance = peer.instance or twin.fleet.instance_of.get(name)
+        instance = peer.instance or twin.fleet.instance_of(name)   # a method, not a dict
         ts, obs = peer.ch["twin_state"], peer.ch["obstacle"]
 
         if instance:
@@ -229,7 +260,7 @@ def _network_state(twin, monitor: CommMonitor, gateway) -> dict:
 
     counters = {
         "msgs_in": monitor.msgs_in, "msgs_out": monitor.msgs_out,
-        "peers": len(monitor.peers),
+        "peers": len(rows),
         "linked": sum(1 for r in rows if r["phase"] == "linked"),
         "silent": sum(1 for r in rows if r["state"] in ("silent", "stale")),
         "in_flight": len(twin.missions_in_flight),
@@ -244,18 +275,14 @@ def _network_state(twin, monitor: CommMonitor, gateway) -> dict:
 
 # --------------------------------------------------------------- mutations
 def _build_mission(twin, spec: dict):
-    from core_msgs.instance_aggregate.mission import (
-        POSTURE_WEIGHTS, Mission, MissionPosture, MissionType)
+    from core_msgs.instance_aggregate.mission import Mission, MissionPosture, MissionType
 
     mid = (spec.get("mission_id") or "").strip() or f"m{int(time.time() * 1000) % 1000000}"
     if any(m.mission_id == mid for m in twin.missions):
         raise ValueError(f"mission id '{mid}' is already in use")
 
     mtype = MissionType[spec.get("type", "GOTO_WAYPOINT")]
-    posture_name = spec.get("posture", "COVERAGE")
-    posture_enum = MissionPosture[posture_name]
-    # POSTURE_WEIGHTS is keyed by name; hand the planner whatever it can index.
-    posture = posture_enum if posture_enum in POSTURE_WEIGHTS else posture_name
+    posture = MissionPosture[spec.get("posture", "COVERAGE")]
 
     goal = spec.get("goal_xy")
     goal_xy = (float(goal[0]), float(goal[1])) if goal else None
@@ -301,10 +328,9 @@ def _make_handler(twin, monitor: CommMonitor, gateway: MissionGateway):
                        "application/json; charset=utf-8")
 
         def _static(self, name: str) -> None:
-            # Node-local static first, shared core_msgs assets (theme.css) second.
             for base in filter(None, (STATIC_DIR, SHARED_STATIC_DIR)):
                 path = os.path.normpath(os.path.join(base, name))
-                if path.startswith(base) and os.path.isfile(path):
+                if path.startswith(base + os.sep) and os.path.isfile(path):
                     ctype = {".html": "text/html", ".css": "text/css",
                              ".js": "text/javascript"}.get(os.path.splitext(path)[1], "text/plain")
                     with open(path, "rb") as fh:
@@ -332,7 +358,7 @@ def _make_handler(twin, monitor: CommMonitor, gateway: MissionGateway):
                 self._json({"error": "not found"}, 404)
             except Exception as exc:
                 logger.exception("GET %s", path)
-                self._json({"error": str(exc)}, 500)
+                self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
 
         def do_POST(self):                                   # noqa: N802
             path = self.path.split("?", 1)[0].rstrip("/")
@@ -340,22 +366,23 @@ def _make_handler(twin, monitor: CommMonitor, gateway: MissionGateway):
                 if path == "/api/missions":
                     mission = _build_mission(twin, self._body())
                     gateway.submit(mission)
-                    return self._json({"ok": True, "mission_id": mission.mission_id}, 201)
+                    # 202: queued for the step thread, not applied yet.
+                    return self._json({"ok": True, "mission_id": mission.mission_id}, 202)
                 if path == "/api/missions/cancel":
                     mid = self._body().get("mission_id", "")
                     ok = gateway.cancel(mid)
-                    return self._json({"ok": ok}, 200 if ok else 404)
+                    return self._json({"ok": ok}, 202 if ok else 404)
                 if path == "/api/replan":
                     gateway.replan_all()
-                    return self._json({"ok": True})
+                    return self._json({"ok": True}, 202)
                 if path == "/api/release":
-                    twin._release_instance(self._body().get("agent", ""))
-                    return self._json({"ok": True})
+                    gateway.release(self._body().get("agent", ""))
+                    return self._json({"ok": True}, 202)
                 self._json({"error": "not found"}, 404)
             except (ValueError, KeyError) as exc:
                 self._json({"error": str(exc)}, 400)
             except Exception as exc:
                 logger.exception("POST %s", path)
-                self._json({"error": str(exc)}, 500)
+                self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
 
     return ConsoleHandler

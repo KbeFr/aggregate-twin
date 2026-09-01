@@ -9,6 +9,7 @@ import time
 # --- ADD THIS MONKEY PATCH ---
 import paho.mqtt.client as mqtt
 
+from aggregate_communication import TwinNetworkNode
 from gui.aggregate_gui import start_gui
 
 # Save the original subscribe method
@@ -23,7 +24,7 @@ mqtt.Client.subscribe = _safe_subscribe
 
 # -----------------------------
 
-from aggregate_twin import OverArchingTwin
+from aggregate_twin import AggregateTwin
 from core_msgs.topic_contract import format_nested_strings, load_config, load_topic_config
 
 from loggers.mission_logger import MissionLogger
@@ -58,16 +59,26 @@ def main() -> None:
 
     mission_logger = MissionLogger()
 
-    twin = OverArchingTwin(
-        flex_config=formatted_flex_config,
-        global_topic_dict=global_topic_dict,
+    twin = AggregateTwin(
         world=world_raw,
         mission_logger=mission_logger,
         namespace=NAMESPACE,
         name=TWIN_NAME,
         loop_freq=int(TICK_HZ),
     )
-    twin.spin()
+
+    network_node = TwinNetworkNode(
+        flex_config=formatted_flex_config,
+        global_topic_dict=global_topic_dict,
+        twin=twin,
+        namespace=NAMESPACE,
+        node_name=TWIN_NAME,
+        loop_freq=int(TICK_HZ),
+    )
+
+    network_node.spin()
+    twin.setup_transport(network_node)
+
 
     start_gui(twin, port=int(TWIN_GUI_PORT))
 

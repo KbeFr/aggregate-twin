@@ -23,15 +23,16 @@ const App = (() => {
   }
 
   function header(t) {
-    $('twinName').innerHTML = `${esc(t.name)} <span>· ${esc(t.namespace)}</span>`;
-    $('simTime').textContent = t.sim_time.toFixed(1);
-    $('step').textContent = t.step;
+    t = t || {};
+    $('twinName').innerHTML = `${esc(t.name ?? '—')} <span>· ${esc(t.namespace ?? '—')}</span>`;
+    $('simTime').textContent = n(t.sim_time, 1);
+    $('step').textContent = t.step ?? 0;
     document.querySelectorAll('#rail b').forEach(b => {
       b.className = b.dataset.s === t.lifecycle
         ? 'on' + (t.lifecycle === 'BINDING' ? ' warn' : '') : '';
     });
     $('footStat').textContent =
-      `${t.linked} linked · ${t.pending} pending · ${t.planning ? 'planning…' : 'planner idle'}`;
+      `${t.linked ?? 0} linked · ${t.pending ?? 0} pending · ${t.planning ? 'planning…' : 'planner idle'}`;
   }
 
   /* -- device-pixel-ratio aware canvas --------------------------------- */
@@ -45,19 +46,40 @@ const App = (() => {
     return { ctx, w, h };
   }
 
-  /* -- polling --------------------------------------------------------- */
+  /* -- polling ---------------------------------------------------------
+     Transport failures and render failures are reported separately. They used
+     to share one catch, so any JavaScript error while drawing was reported as
+     "the container may have stopped" -- which sent you looking in the wrong
+     place entirely.                                                        */
   async function poll() {
     const active = sheets[sheet];
+    if (!active) return;
+
+    let data;
     try {
       const r = await fetch(active.endpoint, { cache: 'no-store' });
-      if (!r.ok) throw new Error(r.status);
-      const data = await r.json();
-      header(data.twin);
-      active.render(data);
+      if (!r.ok) {
+        let detail = `HTTP ${r.status}`;
+        try {
+          const body = await r.json();
+          if (body && body.error) detail += ` · ${body.error}`;
+        } catch (_) { /* body was not json */ }
+        throw new Error(detail);
+      }
+      data = await r.json();
       if (lost) { banner(''); lost = 0; }
     } catch (e) {
       lost = 1;
-      banner('Lost the aggregate twin — the container may have stopped.');
+      banner(`Cannot reach ${active.endpoint} — ${e.message}`);
+      return;
+    }
+
+    try {
+      header(data.twin);
+      active.render(data);
+    } catch (e) {
+      console.error('[console] render failed on', active.endpoint, e);
+      banner(`Console render error: ${e.message} (details in the browser console)`);
     }
   }
 
@@ -76,7 +98,7 @@ const App = (() => {
     document.querySelectorAll('main').forEach(m => m.classList.toggle('active', m.id === name));
     document.querySelectorAll('.tab').forEach(t =>
       t.setAttribute('aria-selected', String(t.dataset.sheet === name)));
-    sheets[name].resize?.();
+    sheets[name]?.resize?.();
     poll();
   }
 
@@ -85,7 +107,7 @@ const App = (() => {
   function boot() {
     document.querySelectorAll('.tab').forEach(t =>
       t.addEventListener('click', () => select(t.dataset.sheet)));
-    addEventListener('resize', () => sheets[sheet].resize?.());
+    addEventListener('resize', () => sheets[sheet]?.resize?.());
     select('world');
     setInterval(poll, 250);
   }

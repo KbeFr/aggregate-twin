@@ -7,9 +7,8 @@
 # * through, and it keeps the discovery payloads (agent footprints) that the
 # * twin itself discards after linking.
 # *
-# * The one thing it *does* write is a mission: the console appends to
-# * twin.missions_to_deploy -- the same public queue the tick already drains --
-# * and then hands planning to the twin's own executor. No protocol shortcut.
+# * Writes go through MissionGateway, which queues onto the twin's inbox so
+# * they run on the step thread. Nothing here touches the transport.
 # **************************************************************************
 from __future__ import annotations
 
@@ -52,13 +51,7 @@ def enum_name(value: Any, default: str = "—") -> str:
 
 
 def shape_of(discovery: Any, kind: str) -> dict:
-    """
-    Footprint the console should draw, read out of the discovery message.
-
-    Discovery schemas differ per project, so this reads the common spellings
-    and falls back to a sane default per agent kind. If your DiscoveryMessage
-    names things differently, this is the only function to edit.
-    """
+    """Footprint the console should draw, read out of the discovery message."""
     if discovery is not None:
         src = getattr(discovery, "shape", None) or discovery
         poly = _first(src, "polygon", "vertices", "footprint")
@@ -85,6 +78,15 @@ def _first(obj: Any, *names: str):
         v = getattr(obj, n, None) if not isinstance(obj, dict) else obj.get(n)
         if v not in (None, 0, [], ()):
             return v
+    return None
+
+
+def _agent_name_of(msg: Any) -> Optional[str]:
+    """DiscoveryMessage field spelling differs per project."""
+    for attr in ("agent_name", "robot_name", "name"):
+        v = getattr(msg, attr, None)
+        if v:
+            return str(v)
     return None
 
 
@@ -162,9 +164,8 @@ class CommMonitor:
             "_on_instance_confirmed":    self._on_confirmed,
             "_on_instance_released":     self._on_released,
             "_handle_discovery":         self._on_discovery,
-            "_handle_instantiate_reply": self._on_instantiate_reply,
-            "_dispatch_mission":         self._on_dispatch,
-            "_cancel_mission_on_agent":  self._on_cancel,
+            "_send_session_out":         self._on_dispatch,
+            "cancel_mission":            self._on_cancel,
             "_handle_mission_reply":     self._on_mission_reply,
             "_handle_twin_state":        self._on_twin_state,
             "_handle_obstacle":          self._on_obstacle,
@@ -181,6 +182,12 @@ class CommMonitor:
                 p = self.peers[agent] = Peer(agent)
             return p
 
+    def snapshot(self) -> list[tuple[str, Peer]]:
+        """Stable list for the HTTP thread to iterate. Peers are mutated by twin
+        callbacks, so never iterate self.peers directly from a request."""
+        with self._lock:
+            return list(self.peers.items())
+
     def log(self, direction: str, kind: str, peer: str, detail: str, level: str = "info") -> None:
         self.events.append({"t": time.time(), "dir": direction, "kind": kind,
                             "peer": peer, "detail": detail, "level": level})
@@ -190,17 +197,18 @@ class CommMonitor:
             self.msgs_out += 1
 
     # -- hooks -------------------------------------------------------------
-    def _on_discovery(self, payload=None, *a, **k) -> None:
-        # Payloads that open a new agent are caught in _request_instance; this
-        # only keeps the beacon rate honest for agents already linked.
-        for name in list(self.twin._pending_discovery):
+    def _on_discovery(self, msg=None, *a, **k) -> None:
+        """Count the beacon against the agent that actually sent it. Counting it
+        against every pending agent inflated each one's rate by the number of
+        agents currently binding."""
+        name = _agent_name_of(msg)
+        if name:
             self.peer(name).ch["discovery"].hit()
 
     def _on_request_instance(self, agent_name, discovery_msg=None, *a, **k) -> None:
         p = self.peer(agent_name)
         p.discovery = discovery_msg or p.discovery
         p.kind = enum_name(getattr(discovery_msg, "kind", None), p.kind)
-        p.ch["discovery"].hit()
         p.ch["instantiate_out"].hit()
         p.phase_to("requested")
         self.log("in", "discovery", agent_name, f"beacon · {p.kind}")
@@ -210,9 +218,6 @@ class CommMonitor:
         p = self.peer(agent_name)
         p.ch["instantiate_out"].hit()
         self.log("out", "instantiate", agent_name, "CANCEL")
-
-    def _on_instantiate_reply(self, payload=None, *a, **k) -> None:
-        self.msgs_in += 0   # counted by the specific transitions below
 
     def _on_confirmed(self, agent_name, instance_name, *a, **k) -> None:
         p = self.peer(agent_name)
@@ -227,17 +232,29 @@ class CommMonitor:
         p.phase_to("released")
         self.log("in", "instantiate", agent_name, "CANCEL_ACK", "warn")
 
-    def _on_dispatch(self, mission, agent_name, *a, **k) -> None:
-        p = self.peer(agent_name)
-        p.ch["mission_out"].hit()
-        self.log("out", "mission", agent_name, f"REQUEST · {mission.mission_id}")
+    def _on_dispatch(self, out=None, *a, **k) -> None:
+        """_send_session_out takes {agent_name: MissionEnvelope}."""
+        for agent_name, env in (out or {}).items():
+            self.peer(agent_name).ch["mission_out"].hit()
+            self.log("out", "mission", agent_name,
+                     f"{enum_name(getattr(env, 'handshake_status', None))} · "
+                     f"{getattr(env, 'mission_id', '?')}")
 
-    def _on_cancel(self, mission_id, agent_name, *a, **k) -> None:
-        self.peer(agent_name).ch["mission_out"].hit()
-        self.log("out", "mission", agent_name, f"CANCEL · {mission_id}", "warn")
+    def _on_cancel(self, mission_id, *a, **k) -> None:
+        """cancel_mission(mission_id, reason=...) -- no agent argument."""
+        session = getattr(self.twin, "_mission_sessions", {}).get(mission_id)
+        agent = getattr(session, "committed_agent", None) if session else None
+        if agent:
+            self.peer(agent).ch["mission_out"].hit()
+        self.log("out", "mission", agent or "—", f"CANCEL · {mission_id}", "warn")
 
     def _on_mission_reply(self, instance_name, payload=None, *a, **k) -> None:
         agent = self.twin.fleet.agent_of(instance_name)
+        if not agent:
+            # A reply from an instance we have already released. Never create a
+            # peer keyed None -- that breaks sorting the peer table forever.
+            self.log("in", "mission", str(instance_name), "reply from unmapped instance", "warn")
+            return
         self.peer(agent).ch["mission_in"].hit()
         self.log("in", "mission", agent, "reply", "ok")
 
@@ -269,25 +286,35 @@ class CommMonitor:
 # ------------------------------------------------------------ mission gate
 class MissionGateway:
     """
-    Queues console-authored missions and keeps planning moving.
+    Console write path.
 
-    Missions are appended to `twin.missions_to_deploy`; the tick drains them
-    into `twin.missions`. A watchdog then submits a planning pass on the
-    twin's own executor, so `step()` applies the resulting paths and the
-    normal mission handshake dispatches them. The console never touches
-    the transport.
     """
 
     def __init__(self, twin: Any, monitor: CommMonitor, poll: float = 1.0) -> None:
         self.twin = twin
         self.monitor = monitor
-        self.poll = poll
         self.last_error: Optional[str] = None
-        self._stop = threading.Event()
-        threading.Thread(target=self._watch, name="gui-planner", daemon=True).start()
+        self._warned_direct = False
 
+    # -- plumbing ----------------------------------------------------------
+    def _command(self, kind: str, direct: Callable[[], Any], **kwargs) -> None:
+        """Prefer the twin's queued command path; fall back to a direct call."""
+        submit = getattr(self.twin, "submit_command", None)
+        if callable(submit):
+            submit(kind, **kwargs)
+            return
+        if not self._warned_direct:
+            self._warned_direct = True
+            logger.warning(
+                "[gui_bridge] twin has no submit_command(); console writes run on "
+                "the HTTP thread and can race step(). See LAYOUT notes.")
+        direct()
+
+    # -- actions -----------------------------------------------------------
     def submit(self, mission) -> None:
-        self.twin.add_mission(mission)
+        self._command("add_mission",
+                      lambda: self.twin.add_mission(mission),
+                      mission=mission)
         self.monitor.log("out", "mission", mission.assigned_ugv or "planner",
                          f"queued · {mission.mission_id}")
 
@@ -296,46 +323,23 @@ class MissionGateway:
         mission = next((m for m in self.twin.missions if m.mission_id == mission_id), None)
         if mission is None:
             return False
-        if mission.assigned_ugv:
-            self.twin._cancel_mission_on_agent(mission_id, mission.assigned_ugv)
+        self._command("cancel_mission",
+                      lambda: self.twin.cancel_mission(mission_id),
+                      mission_id=mission_id)
         mission.mission_status = MissionStatus.CANCELLED
         return True
 
+    def release(self, agent_name: str) -> None:
+        if not agent_name:
+            raise ValueError("no agent given")
+        self._command("release_instance",
+                      lambda: self.twin._release_instance(agent_name),
+                      agent_name=agent_name)
+        self.monitor.log("out", "instantiate", agent_name, "release requested", "warn")
+
     def replan_all(self) -> None:
-        self.twin.trigger_global_reassignment()
+        fn = getattr(self.twin, "trigger_global_reassignment", None)
+        if not callable(fn):
+            raise ValueError("this twin has no global reassignment")
+        self._command("replan", fn)
         self.monitor.log("out", "planner", "fleet", "global reassignment", "warn")
-
-    # -- watchdog ----------------------------------------------------------
-    def _watch(self) -> None:
-        from core_msgs.instance_aggregate.mission import MissionStatus
-        while not self._stop.wait(self.poll):
-            try:
-                t = self.twin
-                if t.missions or t._is_planning_active:
-                    continue
-                waiting = [m for m in t.missions
-                           if m.mission_status == MissionStatus.PENDING
-                           and m.mission_id not in t.missions_in_flight]
-                if not waiting or not t.fleet.all(include_stale=True):
-                    continue
-                ugvs = _ugv_list(t)
-                if not ugvs:
-                    continue
-                t._is_planning_active = True
-                t._planning_future = t._planner_executor.submit(
-                    t.mission_planner.assign_and_plan, t.missions, ugvs)
-                self.monitor.log("out", "planner", "fleet",
-                                 f"planning {len(waiting)} mission(s)")
-            except Exception as exc:                        # keep the thread alive
-                self.last_error = str(exc)
-                logger.exception("[gui_bridge] planning watchdog")
-
-
-def _ugv_list(twin) -> list:
-    """FleetRegistry.ugvs compares AgentKind against the string 'ugv'; read the
-    kind defensively so the console works either way."""
-    out = []
-    for a in twin.fleet.all(include_stale=True):
-        if str(enum_name(a.kind)).lower().endswith("ugv"):
-            out.append(a)
-    return out

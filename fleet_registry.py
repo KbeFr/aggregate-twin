@@ -38,7 +38,8 @@ class FleetRegistry:
                  radius: float | None = None) -> None:
         entry = self._agents.get(agent_name)
         if entry is None:
-            entry = AgentEntry(name=agent_name, kind=kind, instance_name=instance_name, radius=radius)
+            entry = AgentEntry(name=agent_name, kind=kind, instance_name=instance_name,
+                               radius=radius if radius is not None else DEFAULT_AGENT_RADIUS)
             self._agents[agent_name] = entry
         else:
             if entry.instance_name != instance_name:
@@ -52,7 +53,6 @@ class FleetRegistry:
 
         self._agent_to_instance[agent_name] = instance_name
         self._instance_to_agent[instance_name] = agent_name
-
 
     def remove(self, agent_name : str) -> None:
         result = self._agents.pop(agent_name, None)
