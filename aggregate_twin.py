@@ -11,13 +11,15 @@ import queue
 
 
 from core_msgs.agents_contract import parse_agent_kind
-from core_msgs.instance_aggregate.handshake_shared import HandshakeStatus
 from core_msgs.topic_contract import MessageType
 from core_msgs.global_msgs.global_payloads import DiscoveryMessage
 from core_msgs.instance_aggregate.payloads import ObstacleObservation, TwinStatePayload
-from core_msgs.instance_aggregate.instantiate_handshake import InstantiateInitiator, InstantiateEnvelope
+from core_msgs.instance_aggregate.instantiate_handshake import InstantiateInitiator, InstantiateEnvelope, \
+    InstantiateAction
 from core_msgs.instance_aggregate.mission_handshake import MissionSession,  MissionEnvelope, SessionState
 from core_msgs.instance_aggregate.mission import Mission, MissionStatus
+from core_msgs.dispatch import handles, MessageDispatcher
+
 from functions.a_star_custom import AStarPlannerCustom
 from obstacle_registry import ObstacleRegistry
 
@@ -27,32 +29,7 @@ from functions.grid_map import GlobalGridMap
 from functions.mission_planner import MissionPlanner
 
 
-
-def handles(topic):
-    """Tag a method as the handler for a MessageType."""
-    def deco(fn):
-        fn._topic = topic
-        return fn
-    return deco
-
-
-def dispatch_table(cls):
-    """Build cls._DISPATCH from the tags. Runs once, at import."""
-    table = {}
-    for klass in reversed(cls.__mro__):
-        for name, fn in vars(klass).items():
-            topic = getattr(fn, "_topic", None)
-            if topic is None:
-                continue
-            if topic in table and table[topic] != name:
-                raise TypeError(f"{cls.__name__}: {topic} claimed by {table[topic]}() and {name}()")
-            table[topic] = name
-    cls._DISPATCH = table
-    return cls
-
-
-@dispatch_table
-class AggregateTwin:
+class AggregateTwin(MessageDispatcher):
     def __init__(
         self,
         world: dict,
@@ -126,7 +103,7 @@ class AggregateTwin:
     # ------------------------------------------------------------------
 
     def _request_instance(self, agent_name: str, discovery_msg: DiscoveryMessage) -> None:
-        """Sends request envelope to global INSTANTIATE topic for instance initiation"""
+        """Sends request envelope to the global INSTANTIATE topic for instance initiation"""
 
         if agent_name in self._instantiate_initiators:
             self.logger.debug("Instantiating handshake already registered for agent=%s", agent_name)
@@ -184,35 +161,31 @@ class AggregateTwin:
     @handles(MessageType.INSTANTIATE)
     def _handle_instantiate_reply(self, env: InstantiateEnvelope) -> None:
 
-
         # feedback message protection (inout)
-        if env.handshake_status == HandshakeStatus.REQUEST:
+        if env.sender == self.name:
             return
 
-        agent_name, instance_name = env.agent_name, env.instance_name
 
-        # Basic boundary validation
-        if not instance_name:
-            self.logger.error("Instance name missing in reply payload for agent=%s.", agent_name)
-            return
+        agent_name = env.agent_name
 
         initiator = self._instantiate_initiators.get(agent_name)
         if not initiator:
             return  # Or log a debug message
 
         # Let the initiator resolve the protocol rules
-        result_action = initiator.handle(env)
+        result = initiator.handle(env)
+
+        # The reply from this is always for global comm
+        if result.reply:
+            self.transport.publish_global(MessageType.INSTANTIATE, result.reply)
+
 
         # Dispatch to dedicated handlers
-        if result_action == "confirmed":
-            self._on_instance_confirmed(agent_name, instance_name)
-        elif result_action == "released":
-            self._on_instance_released(agent_name, instance_name)
-        elif result_action in ("rejected", "release_rejected"):
-            # TODO: Implment handling
-            self.logger.warning("Instance %s for agent=%s", result_action, agent_name)
-        else:
-            self.logger.error("Unknown initiator action: %s", result_action)
+        if result.action == InstantiateAction.LINK_AGENT:
+            self._on_instance_confirmed(agent_name, env.sender)
+        elif result.action == InstantiateAction.RELEASE_AGENT:
+            self._on_instance_released(agent_name, env.sender)
+
 
     def _on_instance_confirmed(self, agent_name: str, instance_name: str) -> None:
         """Handles the 'confirmed' state transition."""
@@ -242,8 +215,9 @@ class AggregateTwin:
     def _on_instance_released(self, agent_name: str, instance_name: str) -> None:
         """Handles the 'released' state transition."""
         self.fleet.remove(agent_name)
+        self._instantiate_initiators.pop(agent_name, None)
+        self._pending_discovery.pop(agent_name, None)
         self.transport.unsubscribe_instance(instance_name)
-        self.logger.debug("Released: agent=%s", agent_name)
 
 
     @handles(MessageType.MISSION)

@@ -110,7 +110,7 @@ def _agent_path(twin, agent_name: str) -> list[list[float]]:
             continue
         hint = session.hints.get(agent_name)
         pts = getattr(hint, "path", None)
-        if pts:
+        if pts is not None:
             try:
                 return [[float(p[0]), float(p[1])] for p in pts][:MAX_PATH_POINTS]
             except Exception:

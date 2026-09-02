@@ -15,7 +15,7 @@ from core_msgs.topic_contract import (
 EMPTY_COMM_MATRIX_PATH = "config/emptyCommMatrix.yaml"
 INSTANCE_SPECIFIC_CONFIG = "config/specific_topic_config.yaml"
 
-class TwinNetworkNode(flexNode):
+class AggregateNetworkNode(flexNode):
 
     def __init__(self,
                  flex_config,

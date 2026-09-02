@@ -9,7 +9,7 @@ import time
 # --- ADD THIS MONKEY PATCH ---
 import paho.mqtt.client as mqtt
 
-from aggregate_communication import TwinNetworkNode
+from aggregate_comms import AggregateNetworkNode
 from gui.aggregate_gui import start_gui
 
 # Save the original subscribe method
@@ -67,7 +67,7 @@ def main() -> None:
         loop_freq=int(TICK_HZ),
     )
 
-    network_node = TwinNetworkNode(
+    network_node = AggregateNetworkNode(
         flex_config=formatted_flex_config,
         global_topic_dict=global_topic_dict,
         twin=twin,
