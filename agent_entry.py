@@ -17,9 +17,7 @@ class AgentEntry:
     # -- From discovery
     name: str
     instance_name: str
-
     kind: AgentKind
-
     radius : float
 
     # -- From TwinState

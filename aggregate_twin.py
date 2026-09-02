@@ -193,20 +193,13 @@ class AggregateTwin(MessageDispatcher):
             self.logger.warning("Agent=%s confirmed again while already live, ignoring.", agent_name)
             return
 
-        msg = self._pending_discovery.pop(agent_name, None)
-        if not msg:
+        discovery = self._pending_discovery.pop(agent_name, None)
+
+        if not discovery:
             self.logger.error("No Discovery message found for agent %s.", agent_name)
             return
-        if not msg.kind:
-            self.logger.error("No AgentKind in discovery payload, cannot register %s.", agent_name)
-            return
 
-        radius = msg.radius if msg.radius else None
-        if radius is None:
-            self.logger.error("No AgentRadius in discovery payload, using default radius %s.", agent_name)
-
-        # Execute state changes
-        self.fleet.register(agent_name, parse_agent_kind(msg.kind), instance_name, radius)
+        self.fleet.register(agent_name, instance_name,discovery)
 
         self.transport.subscribe_instance(instance_name)
 

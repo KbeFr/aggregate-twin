@@ -7,6 +7,7 @@ import logging
 
 from agent_entry import AgentEntry
 from core_msgs.agents_contract import AgentKind
+from core_msgs.global_msgs.global_payloads import DiscoveryMessage
 from core_msgs.instance_aggregate.payloads import TwinStatePayload
 
 logger = logging.getLogger(__name__)
@@ -34,21 +35,31 @@ class FleetRegistry:
         agent.ingest_twin_state(twin_state)
         return None
 
-    def register(self, agent_name: str, kind: AgentKind, instance_name: str,
-                 radius: float | None = None) -> None:
+    def register(self, agent_name: str, instance_name , discovery :DiscoveryMessage) -> None:
+
+        if not discovery.kind:
+            logger.error("No AgentKind in discovery payload, cannot register %s.", agent_name)
+            return
+        radius = discovery.radius if discovery.radius else None
+
+        if radius is None:
+            logger.error("No AgentRadius in discovery payload, using default radius %s.", DEFAULT_AGENT_RADIUS)
+            radius = DEFAULT_AGENT_RADIUS
+
         entry = self._agents.get(agent_name)
         if entry is None:
-            entry = AgentEntry(name=agent_name, kind=kind, instance_name=instance_name,
-                               radius=radius if radius is not None else DEFAULT_AGENT_RADIUS)
+
+            entry = AgentEntry(name=agent_name, kind=discovery.kind, instance_name=instance_name,
+                               radius=radius )
             self._agents[agent_name] = entry
+
         else:
             if entry.instance_name != instance_name:
                 logger.info("[FleetRegistry] agent=%s moved %s -> %s",
                                  agent_name, entry.instance_name, instance_name)
                 self._instance_to_agent.pop(entry.instance_name, None)
-            entry.kind = kind
+            entry.kind = discovery.kind
             entry.instance_name = instance_name
-        if radius is not None:
             entry.radius = radius
 
         self._agent_to_instance[agent_name] = instance_name
