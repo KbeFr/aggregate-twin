@@ -3,6 +3,12 @@
   const { $, n, pct, esc, kv, surface, post } = App;
   const cv = $('cvWorld');
   const C = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
+  // Canvas silently ignores an invalid/empty fillStyle or strokeStyle (keeps
+  // whatever was last set) rather than throwing - so a CSS token that isn't
+  // actually declared in theme.css doesn't show up as an error, it just
+  // renders as "nothing" (or whatever was drawn right before it). Every
+  // colour lookup for a shape goes through this instead of C() directly.
+  const Csafe = (k, fallback = '#7fd1de') => C(k) || fallback;
 
   let snap = null, T = null, selected = null, picked = null, optionsDone = false;
 
@@ -134,7 +140,8 @@
     (list || []).forEach(a => {
       const x = T.toX(a.x || 0), y = T.toY(a.y || 0);
       const kind = String(a.kind || 'ugv').toLowerCase();
-      const colour = a.stale ? C('--dim') : (kind.endsWith('uav') ? C('--uav') : C('--signal'));
+      const colour = a.stale ? Csafe('--dim', '#5a6b73')
+        : (kind.endsWith('uav') ? Csafe('--uav', '#7fa8ff') : Csafe('--signal', '#7fd1de'));
       const shape = a.shape || DEFAULT_SHAPE;
       ctx.save();
       ctx.translate(x, y); ctx.rotate(-(a.theta || 0));

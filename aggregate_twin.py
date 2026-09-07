@@ -105,8 +105,9 @@ class AggregateTwin(MessageDispatcher):
     def _request_instance(self, agent_name: str, discovery_msg: DiscoveryMessage) -> None:
         """Sends request envelope to the global INSTANTIATE topic for instance initiation"""
 
-        if agent_name in self._instantiate_initiators:
-            self.logger.debug("Instantiating handshake already registered for agent=%s", agent_name)
+        existing = self._instantiate_initiators.get(agent_name)
+        if existing is not None and existing.confirmed:
+            self.logger.debug("Instantiating handshake already confirmed for agent=%s", agent_name)
             return
 
         self.logger.debug("Requesting instance for agent=%s", agent_name)
@@ -149,8 +150,13 @@ class AggregateTwin(MessageDispatcher):
     def _handle_discovery(self, msg: DiscoveryMessage) -> None:
 
         agent_name = msg.agent_name
-        if not agent_name or self.fleet.instance_of(agent_name) or agent_name in self._pending_discovery:
-            self.logger.debug("Ignoring discovery for agent=%s (already live or pending)", agent_name)
+        if not agent_name or self.fleet.instance_of(agent_name):
+            self.logger.debug("Ignoring discovery for agent=%s (already live)", agent_name)
+            return
+
+        initiator = self._instantiate_initiators.get(agent_name)
+        if initiator is not None and initiator.confirmed:
+            self.logger.debug("Ignoring discovery for agent=%s (instantiate already confirmed)", agent_name)
             return
 
         self.logger.debug("Discovery received: agent=%s", agent_name)
@@ -409,5 +415,3 @@ class AggregateTwin(MessageDispatcher):
     @property
     def pending_missions(self) -> list[Mission]:
         return [m for m in self._missions.values() if m.mission_status == MissionStatus.PENDING]
-
-

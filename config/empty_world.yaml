@@ -1,13 +1,5 @@
-# FIX: WorldConfig.from_yaml() (world_handler.py) reads raw["width"],
-# raw["height"], etc. directly at the top level. The original file wrapped
-# these under a `world:` key, which meant WorldConfig.from_yaml(load_config(
-# "config/empty_world.yaml")) raised KeyError: 'width' the first time it was
-# actually called. Unwrapped here to match the loader. If you'd rather keep
-# the `world:` wrapper for readability/consistency with other configs,
-# change WorldConfig.from_yaml to do `raw = raw.get("world", raw)` instead
-# and revert this file.
-height: 10  # the height of the world
-width: 10   # the width of the world
+height: 40 # the height of the world
+width: 40   # the width of the world
 origin_x: 0.0
 origin_y: 0.0
 resolution: 0.4
