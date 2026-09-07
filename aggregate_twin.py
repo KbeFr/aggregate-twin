@@ -203,7 +203,7 @@ class AggregateTwin(MessageDispatcher):
 
         self.transport.subscribe_instance(instance_name)
 
-        self.logger.debug("Confirmed: agent=%s kind=%s instance=%s", agent_name, msg.kind, instance_name)
+        self.logger.debug("Confirmed: agent=%s kind=%s instance=%s", agent_name, discovery.kind, instance_name)
 
     def _on_instance_released(self, agent_name: str, instance_name: str) -> None:
         """Handles the 'released' state transition."""
@@ -251,7 +251,10 @@ class AggregateTwin(MessageDispatcher):
     def _handle_obstacle(self, instance_name: str, msg : ObstacleObservation) -> None:
         agent_name = self.fleet.agent_of(instance_name)      # was self._instance_to_agent → AttributeError
         if not agent_name:
-            return                                                     # TODO check
+            self.logger.warning("Obstacles received from non registered agent %s", agent_name)
+            return
+
+        self.logger.debug("received obstacle detection from agent %s", agent_name)
         self.obstacles.ingest(agent_name, msg, self._sim_step)
 
     # ------------------------------------------------------------------
