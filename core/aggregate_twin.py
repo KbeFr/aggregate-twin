@@ -160,6 +160,7 @@ class AggregateTwin(MessageDispatcher):
 
 
 
+
         self._pending_discovery[agent_name] = msg
         self._request_instance(agent_name, msg)
 
