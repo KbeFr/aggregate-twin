@@ -269,8 +269,10 @@ def _network_state(twin, monitor: CommMonitor, gateway) -> dict:
         "planner_error": gateway.last_error,
     }
     events = [dict(e) for e in list(monitor.events)[-120:]]
+    telemetry_events = [dict(e) for e in list(monitor.telemetry_events)[-120:]]
     return {"twin": aggregate, "nodes": nodes, "links": links,
-            "rows": rows, "counters": counters, "events": events}
+            "rows": rows, "counters": counters, "events": events,
+            "telemetry_events": telemetry_events}
 
 
 # --------------------------------------------------------------- mutations

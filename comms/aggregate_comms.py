@@ -1,8 +1,3 @@
-"""
-twin_network_node.py
-
-Everything that knows flexNode exists. That's the whole point of the file.
-"""
 from __future__ import annotations
 
 import jsonpickle
@@ -12,11 +7,11 @@ from core_msgs.topic_contract import (
     MessageType, register_node_topics, load_topic_config, get_data_name,
 )
 
-EMPTY_COMM_MATRIX_PATH = "config/emptyCommMatrix.yaml"
+EMPTY_COMM_MATRIX_PATH = "../config/emptyCommMatrix.yaml"
 INSTANCE_SPECIFIC_CONFIG = "config/specific_topic_config.yaml"
 
 class AggregateNetworkNode(flexNode):
-
+    """FlexNode interface to aggregate twin """
     def __init__(self,
                  flex_config,
                  global_topic_dict,

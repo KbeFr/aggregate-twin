@@ -1,16 +1,8 @@
-"""
-aggregate_twin.py
-
-Orchestrates multiple agents via instance twins using a decoupled
-Initiator pattern for lifecycle and mission handshakes.
-"""
 from __future__ import annotations
 
 import logging
 import queue
 
-
-from core_msgs.agents_contract import parse_agent_kind
 from core_msgs.topic_contract import MessageType
 from core_msgs.global_msgs.global_payloads import DiscoveryMessage
 from core_msgs.instance_aggregate.payloads import ObstacleObservation, TwinStatePayload
@@ -18,18 +10,22 @@ from core_msgs.instance_aggregate.instantiate_handshake import InstantiateInitia
     InstantiateAction
 from core_msgs.instance_aggregate.mission_handshake import MissionSession,  MissionEnvelope, SessionState
 from core_msgs.instance_aggregate.mission import Mission, MissionStatus
-from core_msgs.dispatch import handles, MessageDispatcher
+from core_msgs.utils.dispatch import handles, MessageDispatcher
 
 from functions.a_star_custom import AStarPlannerCustom
 from obstacle_registry import ObstacleRegistry
 
-from world_handler import WorldConfig
-from fleet_registry import FleetRegistry
+from core.world_handler import WorldConfig
+from core.fleet.fleet_registry import FleetRegistry
 from functions.grid_map import GlobalGridMap
 from functions.mission_planner import MissionPlanner
 
 
 class AggregateTwin(MessageDispatcher):
+    """
+    Orchestrates multiple agents via instance twins using a decoupled
+    Initiator pattern for lifecycle and mission handshakes.
+    """
     def __init__(
         self,
         world: dict,
@@ -171,12 +167,11 @@ class AggregateTwin(MessageDispatcher):
         if env.sender == self.name:
             return
 
-
         agent_name = env.agent_name
 
         initiator = self._instantiate_initiators.get(agent_name)
         if not initiator:
-            return  # Or log a debug message
+            return
 
         # Let the initiator resolve the protocol rules
         result = initiator.handle(env)
@@ -184,7 +179,6 @@ class AggregateTwin(MessageDispatcher):
         # The reply from this is always for global comm
         if result.reply:
             self.transport.publish_global(MessageType.INSTANTIATE, result.reply)
-
 
         # Dispatch to dedicated handlers
         if result.action == InstantiateAction.LINK_AGENT:

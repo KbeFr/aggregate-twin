@@ -1,6 +1,3 @@
-"""
-fleet_registry.py
-"""
 from __future__ import annotations
 
 import logging
@@ -16,12 +13,15 @@ logger = logging.getLogger(__name__)
 DEFAULT_AGENT_RADIUS = 0.22 #[m]
 
 class FleetRegistry:
-    """Shadow state for every known agent, kept current by telemetry only."""
+    """
+    Shadow state for every known agent, kept current by twin state messages.
+    Handles bookkeeping of instance agent links also
+    """
 
     def __init__(self, stale_after: float = 3.0):
         self.stale_after = stale_after
         self._agents: dict[str, AgentEntry] = {}
-        # Bi-directional routing maps
+        # Bidirectional routing maps
         self._agent_to_instance: dict[str, str] = {}
         self._instance_to_agent: dict[str, str] = {}
 

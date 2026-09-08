@@ -28,7 +28,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from functions.grid_map import GlobalGridMap
+from core.functions.grid_map import GlobalGridMap
 
 logger = logging.getLogger(__name__)
 

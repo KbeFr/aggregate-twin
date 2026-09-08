@@ -5,7 +5,7 @@
   const C = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
   const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  let net = null, placed = [], hover = null;
+  let net = null, placed = [], hover = null, logChannel = 'handshake';
 
   const STATE = { live: '--ok', stale: '--warn', silent: '--bad',
                   pending: '--signal', released: '--dim' };
@@ -161,6 +161,13 @@
       : '<p class="empty">Quiet so far.</p>';
   }
 
+  document.querySelectorAll('.logTab').forEach(b => b.addEventListener('click', () => {
+    logChannel = b.dataset.log;
+    document.querySelectorAll('.logTab').forEach(x =>
+      x.setAttribute('aria-selected', String(x === b)));
+    if (net) log(logChannel === 'telemetry' ? net.telemetry_events : net.events);
+  }));
+
   App.register('network', {
     endpoint: '/api/network',
     resize: draw,
@@ -168,7 +175,7 @@
       net = data;
       counters(data.counters);
       rows(data.rows);
-      log(data.events);
+      log(logChannel === 'telemetry' ? data.telemetry_events : data.events);
       draw();
     }
   });

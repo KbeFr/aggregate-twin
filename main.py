@@ -1,16 +1,12 @@
-# **************************************************************************
-# * main.py
-# *
 import logging
 import os
 import time
 
 
-# --- ADD THIS MONKEY PATCH ---
-import paho.mqtt.client as mqtt
 
-from aggregate_comms import AggregateNetworkNode
-from gui.aggregate_gui import start_gui
+
+# --- MONKEY PATCH FOR MQTT SUBSCRIBING PROBLEM ---
+import paho.mqtt.client as mqtt
 
 # Save the original subscribe method
 _original_subscribe = mqtt.Client.subscribe
@@ -24,10 +20,14 @@ mqtt.Client.subscribe = _safe_subscribe
 
 # -----------------------------
 
-from aggregate_twin import AggregateTwin
-from core_msgs.topic_contract import format_nested_strings, load_config, load_topic_config
+from comms.aggregate_comms import AggregateNetworkNode
+from gui.aggregate_gui import start_gui
+from core.aggregate_twin import AggregateTwin
+from core_msgs.topic_contract import load_topic_config
+from core_msgs.utils.utils import load_config, format_nested_strings
+from utils.mission_logger import MissionLogger
 
-from loggers.mission_logger import MissionLogger
+
 
 ## Environment variables from Dockerfile / docker-compose
 TICK_HZ = float(os.environ.get("TWIN_TICK_HZ", "10"))
@@ -40,7 +40,6 @@ WORLD_CONFIG_PATH = os.environ.get("WORLD_CONFIG_PATH", "config/empty_world.yaml
 TWIN_GUI_PORT = os.environ.get("TWIN_GUI_PORT", "8082")
 
 logger = logging.getLogger(__name__)
-
 
 
 def main() -> None:
@@ -87,7 +86,7 @@ def main() -> None:
         while True:
             time.sleep(1)  # Sleep to avoid busy-waiting
     except KeyboardInterrupt:
-        twin.shutdown()
+        network_node.shutdown()
         logger.warning("\nKeyboard interruption detected. Exiting...")
 
 if __name__ == "__main__":

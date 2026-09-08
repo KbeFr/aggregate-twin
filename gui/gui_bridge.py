@@ -149,7 +149,9 @@ class CommMonitor:
         self.twin = twin
         self.started = time.time()
         self.peers: dict[str, Peer] = {}
-        self.events: deque[dict] = deque(maxlen=LOG_SIZE)
+        # Two separate logs
+        self.events: deque[dict] = deque(maxlen=LOG_SIZE)            # discovery/instantiate/mission
+        self.telemetry_events: deque[dict] = deque(maxlen=LOG_SIZE)  # obstacle/twin_state
         self.msgs_in = 0
         self.msgs_out = 0
         self._lock = threading.Lock()
@@ -188,9 +190,11 @@ class CommMonitor:
         with self._lock:
             return list(self.peers.items())
 
-    def log(self, direction: str, kind: str, peer: str, detail: str, level: str = "info") -> None:
-        self.events.append({"t": time.time(), "dir": direction, "kind": kind,
-                            "peer": peer, "detail": detail, "level": level})
+    def log(self, direction: str, kind: str, peer: str, detail: str, level: str = "info",
+             channel: str = "handshake") -> None:
+        target = self.telemetry_events if channel == "telemetry" else self.events
+        target.append({"t": time.time(), "dir": direction, "kind": kind,
+                       "peer": peer, "detail": detail, "level": level})
         if direction == "in":
             self.msgs_in += 1
         elif direction == "out":
@@ -263,13 +267,14 @@ class CommMonitor:
         if agent:
             self.peer(agent).ch["twin_state"].hit()
             self.msgs_in += 1
+            self.log("in", "twin_state", agent, "telemetry", channel="telemetry")
 
     def _on_obstacle(self, instance_name, payload=None, *a, **k) -> None:
         agent = self.twin.fleet.agent_of(instance_name)
         if agent:
             self.peer(agent).ch["obstacle"].hit()
             self.msgs_in += 1
-            self.log("in", "obstacle", agent, "observation")
+            self.log("in", "obstacle", agent, "observation", channel="telemetry")
 
     # -- reporting ---------------------------------------------------------
     def link_state(self, p: Peer, telemetry_stale_after: float) -> str:

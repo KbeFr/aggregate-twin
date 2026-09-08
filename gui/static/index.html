@@ -17,6 +17,12 @@
   .strip b{display:block;font-family:var(--mono);font-size:17px;font-weight:500;color:var(--text)}
   .strip span{font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;
               text-transform:uppercase;color:var(--muted)}
+  /* small toggle inside the Protocol log header - handshake vs telemetry */
+  .logToggle{float:right;display:flex;gap:4px}
+  .logTab{font:9.5px var(--mono, ui-monospace, monospace);letter-spacing:.08em;
+          text-transform:uppercase;padding:3px 8px;border-radius:99px;
+          border:1px solid var(--rule);background:transparent;color:var(--muted);cursor:pointer}
+  .logTab[aria-selected="true"]{color:var(--text);border-color:var(--signal);background:rgba(127,209,222,.1)}
 </style>
 </head>
 <body>
@@ -120,7 +126,12 @@
   <aside>
     <div class="strip" id="counters"></div>
     <section>
-      <div class="eyebrow">Protocol log <u id="logCount">0</u></div>
+      <div class="eyebrow">Protocol log <u id="logCount">0</u>
+        <span class="logToggle">
+          <button class="logTab" data-log="handshake" aria-selected="true">Handshake</button>
+          <button class="logTab" data-log="telemetry" aria-selected="false">Telemetry</button>
+        </span>
+      </div>
       <div class="log" id="eventLog"><p class="empty">Quiet so far.</p></div>
     </section>
   </aside>
