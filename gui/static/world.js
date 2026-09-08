@@ -233,6 +233,25 @@
     });
   }
 
+  /* one row per report - the same obstacle can appear more than once if
+     several agents (or the static world file) all reported it separately;
+     `source` tells them apart ('world' for ground truth, else the
+     reporting agent's name). */
+  function obstaclesPanel(list) {
+    list = list || [];
+    $('obstacleCount').textContent = list.length;
+    $('obstacleBox').innerHTML = list.length ? list.map(o => `
+      <div class="row">
+        <div class="hd"><span>${esc(o.id)}</span>
+          <span class="tag${o.dynamic ? ' warn' : ''}">${o.dynamic ? 'dynamic' : 'static'}</span></div>
+        <div class="sub"><span>x ${n(o.x)}  y ${n(o.y)}</span>
+          <span>${o.polygon ? 'polygon' : 'r ' + n(o.radius ?? 0)}</span></div>
+        <div class="sub"><span>${esc(o.source)}</span>
+          <span>${o.age != null ? n(o.age, 1) + 's old' : '—'}${o.confidence != null && o.confidence < 1 ? ' · ' + pct(o.confidence * 100) : ''}</span></div>
+      </div>`).join('')
+      : '<p class="empty">None observed yet.</p>';
+  }
+
   function note(msg, bad) {
     const p = $('formNote');
     p.className = bad ? 'empty error' : 'empty ok';
@@ -315,6 +334,7 @@
       fillOptions(data.options);
       fleet(data.agents);
       missions(data.missions);
+      obstaclesPanel(data.obstacles);
       draw();
     }
   });

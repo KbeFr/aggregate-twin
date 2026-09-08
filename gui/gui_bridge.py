@@ -149,7 +149,9 @@ class CommMonitor:
         self.twin = twin
         self.started = time.time()
         self.peers: dict[str, Peer] = {}
-        # Two separate logs
+        # Two separate logs, not one filtered view: obstacle/twin_state fire
+        # at sensor rate and would otherwise evict every handshake entry out
+        # of a single shared deque within seconds.
         self.events: deque[dict] = deque(maxlen=LOG_SIZE)            # discovery/instantiate/mission
         self.telemetry_events: deque[dict] = deque(maxlen=LOG_SIZE)  # obstacle/twin_state
         self.msgs_in = 0
@@ -163,6 +165,7 @@ class CommMonitor:
         hooks = {
             "_request_instance":         self._on_request_instance,
             "_release_instance":         self._on_release_instance,
+            "_handle_instantiate_reply": self._on_instantiate_reply,
             "_on_instance_confirmed":    self._on_confirmed,
             "_on_instance_released":     self._on_released,
             "_handle_discovery":         self._on_discovery,
@@ -236,6 +239,31 @@ class CommMonitor:
         p.phase_to("released")
         self.log("in", "instantiate", agent_name, "CANCEL_ACK", "warn")
 
+    def _on_instantiate_reply(self, env=None, *a, **k) -> None:
+        """_handle_instantiate_reply sees every raw ACK/NACK/CANCEL_ACK an
+        instance sends back - _on_confirmed/_on_released only fire once the
+        *outcome* is decided, so without this, a losing instance's NACK (or
+        a winner's initial ACK, before it's actually confirmed) never showed
+        up anywhere in the log at all."""
+        if env is None:
+            return
+        # the 'instantiate' topic is inout for the aggregate itself, so it
+        # also receives its own outgoing envelopes as an echo - same guard
+        # _handle_instantiate_reply applies internally, needed here too
+        # since the wrapper fires regardless of what the original did.
+        if getattr(env, "sender", None) == getattr(self.twin, "name", None):
+            return
+        agent_name = getattr(env, "agent_name", None)
+        if not agent_name:
+            return
+        status = enum_name(getattr(env, "handshake_status", None))
+        sender = getattr(env, "sender", "?")
+        p = self.peer(agent_name)
+        if status == "NACK":
+            p.nacks += 1
+        level = "warn" if status == "NACK" else ("ok" if status == "ACK" else "info")
+        self.log("in", "instantiate", agent_name, f"{status.lower()} from {sender}", level)
+
     def _on_dispatch(self, out=None, *a, **k) -> None:
         """_send_session_out takes {agent_name: MissionEnvelope}."""
         for agent_name, env in (out or {}).items():
@@ -259,8 +287,11 @@ class CommMonitor:
             # peer keyed None -- that breaks sorting the peer table forever.
             self.log("in", "mission", str(instance_name), "reply from unmapped instance", "warn")
             return
+        status = enum_name(getattr(payload, "handshake_status", None))
+        mission_id = getattr(payload, "mission_id", "?")
+        level = "warn" if status == "NACK" else "ok"
         self.peer(agent).ch["mission_in"].hit()
-        self.log("in", "mission", agent, "reply", "ok")
+        self.log("in", "mission", agent, f"{status.lower()} · {mission_id}", level)
 
     def _on_twin_state(self, instance_name, payload=None, *a, **k) -> None:
         agent = self.twin.fleet.agent_of(instance_name)
