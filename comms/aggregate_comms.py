@@ -6,8 +6,9 @@ from flexCommunicator.clientLibraries.flcpy.flexNode import flexNode
 from core_msgs.topic_contract import (
     MessageType, register_node_topics, load_topic_config, get_data_name,
 )
+from flexCommunicator.clientLibraries.flcpy.utils.constants import APPLICATION_STATUS
 
-EMPTY_COMM_MATRIX_PATH = "../config/emptyCommMatrix.yaml"
+EMPTY_COMM_MATRIX_PATH = "config/emptyCommMatrix.yaml"
 INSTANCE_SPECIFIC_CONFIG = "config/specific_topic_config.yaml"
 
 class AggregateNetworkNode(flexNode):
@@ -46,6 +47,9 @@ class AggregateNetworkNode(flexNode):
 
         self.timer = self.create_timer(timer_period=1 / loop_freq,
                                        callback=twin.step, autostart=True)
+
+        self.application_status.set(value=APPLICATION_STATUS.RUNNING)
+
 
     # --- inbound: decode, then queue. Runs on transport threads. -------------
 

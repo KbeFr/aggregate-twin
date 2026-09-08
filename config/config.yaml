@@ -41,7 +41,6 @@ Aggregate_Twin_Config:
         port: 6379
 
   application_Descriptor:
-    # {node_id} is filled in per comm node
     connectorID_type: static
-    connectorID: "{node_id}@irsim-twin"
-    id: "{node_id}"  # ugv_twin/uav_twin should override this, not share it
+    connectorID: "irsim-twin"
+    id: "{node_id}"

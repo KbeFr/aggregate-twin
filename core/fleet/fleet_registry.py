@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from agent_entry import AgentEntry
+from core.fleet.agent_entry import AgentEntry
 from core_msgs.agents_contract import AgentKind
 from core_msgs.global_msgs.global_payloads import DiscoveryMessage
 from core_msgs.instance_aggregate.payloads import TwinStatePayload

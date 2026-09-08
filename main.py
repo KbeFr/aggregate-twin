@@ -50,6 +50,7 @@ def main() -> None:
         flex_config_dict,
         mqtt_address=MQTT_BROKER_HOST,
         redis_address=REDIS_HOST,
+        node_id=TWIN_NAME
     )
 
     global_topic_dict = load_topic_config("config/global_topic_config.yaml")

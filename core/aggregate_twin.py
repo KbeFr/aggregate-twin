@@ -12,13 +12,13 @@ from core_msgs.instance_aggregate.mission_handshake import MissionSession,  Miss
 from core_msgs.instance_aggregate.mission import Mission, MissionStatus
 from core_msgs.utils.dispatch import handles, MessageDispatcher
 
-from functions.a_star_custom import AStarPlannerCustom
-from obstacle_registry import ObstacleRegistry
+from core.functions.a_star_custom import AStarPlannerCustom
+from core.obstacle_registry import ObstacleRegistry
 
 from core.world_handler import WorldConfig
 from core.fleet.fleet_registry import FleetRegistry
-from functions.grid_map import GlobalGridMap
-from functions.mission_planner import MissionPlanner
+from core.functions.grid_map import GlobalGridMap
+from core.functions.mission_planner import MissionPlanner
 
 
 class AggregateTwin(MessageDispatcher):
@@ -156,6 +156,9 @@ class AggregateTwin(MessageDispatcher):
             return
 
         self.logger.debug("Discovery received: agent=%s", agent_name)
+
+
+
 
         self._pending_discovery[agent_name] = msg
         self._request_instance(agent_name, msg)
