@@ -7,8 +7,24 @@
 <link rel="stylesheet" href="/theme.css">
 <style>
   /* layout that belongs to this console only -- tokens live in theme.css */
-  main#world{grid-template-columns:minmax(0,1fr) 330px}
+  /* World: dispatch on the left, live lists on the right, map in between --
+     keeps the tall form off the same edge as the three growing lists, which
+     is what was crowding the field. */
+  main#world{grid-template-columns:300px minmax(0,1fr) 330px}
   main#network{grid-template-columns:minmax(0,1fr) 330px}
+  /* theme.css's `aside` assumes a right-hand column, so flip the divider. */
+  aside.pane-l{border-left:0;border-right:1px solid var(--rule)}
+
+  @media (max-width:900px){
+    /* Stacked, the map has to come first -- source order puts the form first
+       so it owns the left column on desktop. Orders are set explicitly on all
+       three children: leaving the asides to source order would have slotted
+       the tall dispatch form between the map and the lists. */
+    main#world.active{grid-template-rows:300px auto auto}
+    main#world > .field{order:1}
+    main#world > aside:not(.pane-l){order:2}
+    main#world > aside.pane-l{order:3;border-right:0;border-top:1px solid var(--rule)}
+  }
   .stack{display:grid;grid-template-rows:minmax(0,1fr) minmax(140px,38%);min-height:0}
   .sheet{overflow:auto;min-height:0;border-top:1px solid var(--rule);background:var(--panel-2)}
   .sheet .eyebrow{padding:12px 16px 0}
@@ -123,33 +139,7 @@
 
 <!-- ─── sheet 1 · world ─────────────────────────────────────────────── -->
 <main id="world" class="active">
-  <div class="field">
-    <canvas id="cvWorld"></canvas>
-    <div class="legend">
-      <span><s style="background:var(--signal)"></s>ugv</span>
-      <span><s style="background:var(--uav)"></s>uav</span>
-      <span><s style="background:var(--warn)"></s>obstacle</span>
-      <span><s style="background:var(--goal)"></s>goal</span>
-    </div>
-    <div class="readout" id="readout"></div>
-  </div>
-
-  <aside>
-    <section>
-      <div class="eyebrow">Fleet <u id="fleetCount">0 agents</u></div>
-      <div id="fleetBox"><p class="empty">No agents linked. Waiting for discovery.</p></div>
-    </section>
-
-    <section>
-      <div class="eyebrow">Missions <u id="missionCount">0</u></div>
-      <div id="missionBox"><p class="empty">Nothing dispatched yet.</p></div>
-    </section>
-
-    <section>
-      <div class="eyebrow">Obstacles <u id="obstacleCount">0</u></div>
-      <div id="obstacleBox"><p class="empty">None observed yet.</p></div>
-    </section>
-
+  <aside class="pane-l">
     <section>
       <div class="eyebrow">Dispatch a mission</div>
       <div class="fld">
@@ -183,6 +173,34 @@
         <button id="btnReplan">Replan fleet</button>
       </div>
       <p class="empty" id="formNote" style="margin-top:10px">Click the field to pick a goal.</p>
+    </section>
+  </aside>
+
+  <div class="field">
+    <canvas id="cvWorld"></canvas>
+    <div class="legend">
+      <span><s style="background:var(--signal)"></s>ugv</span>
+      <span><s style="background:var(--uav)"></s>uav</span>
+      <span><s style="background:var(--warn)"></s>obstacle</span>
+      <span><s style="background:var(--goal)"></s>goal</span>
+    </div>
+    <div class="readout" id="readout"></div>
+  </div>
+
+  <aside>
+    <section>
+      <div class="eyebrow">Fleet <u id="fleetCount">0 agents</u></div>
+      <div id="fleetBox"><p class="empty">No agents linked. Waiting for discovery.</p></div>
+    </section>
+
+    <section>
+      <div class="eyebrow">Missions <u id="missionCount">0</u></div>
+      <div id="missionBox"><p class="empty">Nothing dispatched yet.</p></div>
+    </section>
+
+    <section>
+      <div class="eyebrow">Obstacles <u id="obstacleCount">0</u></div>
+      <div id="obstacleBox"><p class="empty">None observed yet.</p></div>
     </section>
   </aside>
 </main>

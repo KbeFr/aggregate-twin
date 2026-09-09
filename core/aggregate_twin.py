@@ -405,14 +405,6 @@ class AggregateTwin(MessageDispatcher):
             # Tick the sessions
             self._send_session_out(session.tick())
 
-            # Check the state
-            if session.state is SessionState.DONE:
-                session.mission.mission_status = MissionStatus.COMPLETE
-
-            elif session.state is SessionState.FAILED:
-                # Because of session we could retry with second winner and so on (later addition)
-                session.mission.mission_status = MissionStatus.PENDING
-
             if session.retirable:
                 self._mission_sessions.pop(mid, None)
                 self.logger.debug("session mission=%s retired", mid)

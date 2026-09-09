@@ -97,6 +97,44 @@ def _path_points(arr) -> list[list[float]]:
     return pts
 
 
+def _mission_path(arr) -> list[list[float]]:
+    """Route stored on a Mission, as [[x, y], ...].
+
+    Mission.path is typed as a bare `list`, so unlike _agent_path's sources it
+    carries no guarantee of A*'s (2, N) column layout -- it may equally hold
+    (N, 2) points. Sniff the orientation instead of assuming: a 2-element outer
+    sequence whose first entry is itself a sequence is the (2, N) form, and
+    anything else is treated as a point list. Always returns a list; the
+    console reads mission.path unconditionally.
+    """
+    if arr is None:
+        return []
+    try:
+        if len(arr) == 0:
+            return []
+    except TypeError:
+        return []
+
+    try:
+        first = arr[0]
+        is_columns = len(arr) == 2 and hasattr(first, "__len__") and len(first) > 2
+    except Exception:
+        return []
+
+    if is_columns:
+        return _path_points(arr)
+
+    try:
+        pts = [[float(p[0]), float(p[1])] for p in arr]
+    except Exception:
+        return []
+    stride = max(1, len(pts) // MAX_PATH_POINTS)
+    thinned = pts[::stride]
+    if stride > 1 and pts and thinned[-1] != pts[-1]:
+        thinned.append(pts[-1])
+    return thinned
+
+
 def _agent_path(twin, agent_name: str) -> list[list[float]]:
     """Best available route for this agent.
 
@@ -204,6 +242,8 @@ def _world_state(twin, monitor: CommMonitor) -> dict:
             "unlock_time": m.unlock_time,
             "assigned": m.assigned_ugv,
             "cost": None if m.last_cost in (None, float("inf")) else round(float(m.last_cost), 2),
+            "distance": None if m.distance is None else round(float(m.distance), 2),
+            "path": _mission_path(m.path),
             "in_flight": m.mission_id in in_flight_ids,
         })
 

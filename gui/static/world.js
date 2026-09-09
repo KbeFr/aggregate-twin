@@ -10,7 +10,7 @@
   // colour lookup for a shape goes through this instead of C() directly.
   const Csafe = (k, fallback = '#7fd1de') => C(k) || fallback;
 
-  let snap = null, T = null, selected = null, picked = null, optionsDone = false;
+  let snap = null, T = null, selected = null, selectedMission = null, picked = null, optionsDone = false;
 
   /* ---- projection ---------------------------------------------------- */
   function fit(world, w, h) {
@@ -170,6 +170,57 @@
     });
   }
 
+  /* The route the planner actually committed for one mission, drawn only
+     while its row is selected. Deliberately layered above `paths()` and in
+     the goal colour rather than the signal colour, so it reads as "this
+     mission's plan" and not as another agent's live path. */
+  function missionPath(ctx, missions) {
+    if (!selectedMission) return;
+    const m = (missions || []).find(x => x.id === selectedMission);
+    const pts = m && m.path;
+    if (!Array.isArray(pts) || pts.length < 2) return;
+
+    const xy = pts.map(p => [T.toX(p[0]), T.toY(p[1])]);
+
+    ctx.save();
+    ctx.lineJoin = ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(217,123,166,.22)'; ctx.lineWidth = 6;   // soft halo, lifts it off the grid
+    ctx.beginPath();
+    xy.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+    ctx.stroke();
+    ctx.strokeStyle = C('--goal'); ctx.lineWidth = 1.8;
+    ctx.stroke();
+
+    // direction ticks, spaced along the polyline rather than per-vertex so
+    // density doesn't depend on how finely the planner sampled the route
+    const total = xy.reduce((s, p, i) => i ? s + Math.hypot(p[0] - xy[i - 1][0], p[1] - xy[i - 1][1]) : 0, 0);
+    const gap = Math.max(60, total / 8);
+    let acc = 0, next = gap;
+    for (let i = 1; i < xy.length; i++) {
+      const [x0, y0] = xy[i - 1], [x1, y1] = xy[i];
+      const seg = Math.hypot(x1 - x0, y1 - y0);
+      if (!seg) continue;
+      while (acc + seg >= next) {
+        const t = (next - acc) / seg;
+        const px = x0 + (x1 - x0) * t, py = y0 + (y1 - y0) * t;
+        const a = Math.atan2(y1 - y0, x1 - x0);
+        ctx.beginPath();
+        ctx.moveTo(px - 4 * Math.cos(a - 0.5), py - 4 * Math.sin(a - 0.5));
+        ctx.lineTo(px, py);
+        ctx.lineTo(px - 4 * Math.cos(a + 0.5), py - 4 * Math.sin(a + 0.5));
+        ctx.stroke();
+        next += gap;
+      }
+      acc += seg;
+    }
+
+    const [sx, sy] = xy[0], [ex, ey] = xy[xy.length - 1];
+    ctx.fillStyle = C('--goal');
+    ctx.beginPath(); ctx.arc(sx, sy, 3.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(ex, ey, 5, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+
   /* ---- draw ----------------------------------------------------------- */
   function draw() {
     const { ctx, w, h } = surface(cv);
@@ -178,14 +229,21 @@
     const step = grid(ctx, snap.world, w, h);
     obstacles(ctx, snap.obstacles);
     paths(ctx, snap.agents);
+    missionPath(ctx, snap.missions);
     goals(ctx, snap.missions);
     agents(ctx, snap.agents);
 
     const list = snap.agents || [];
     const sel = list.find(a => a.name === selected);
+    const mSel = selectedMission && (snap.missions || []).find(m => m.id === selectedMission);
     $('readout').innerHTML = sel
       ? `${esc(sel.name)}  x <em>${n(sel.x)}</em>  y <em>${n(sel.y)}</em>  θ <em>${n(sel.theta)}</em>\n` +
         `v <em>${n(sel.v)}</em>  ω <em>${n(sel.w)}</em>  ·  telemetry <em>${n(sel.age, 1)}s</em> old`
+      : mSel
+      ? `${esc(mSel.id)}  ·  ${esc(mSel.assigned || 'unassigned')}  ·  <em>${esc(mSel.status)}</em>\n` +
+        `${(mSel.path || []).length} pt route  ·  ` +
+        `${mSel.distance != null ? `<em>${n(mSel.distance, 1)}</em> m  ·  ` : ''}` +
+        `cost <em>${mSel.cost ?? '—'}</em>`
       : `${list.length} agent(s) · ${(snap.obstacles || []).length} obstacle(s) · 1 square = ${step} m`;
   }
 
@@ -492,18 +550,31 @@
     list = list || [];
     $('missionCount').textContent = list.length;
     const cls = { ACTIVE: 'ok', PENDING: 'info', FAILED: 'error', CANCELLED: 'warn', COMPLETE: 'ok' };
-    $('missionBox').innerHTML = list.length ? list.map(m => `
-      <div class="row" data-state="${m.status === 'ACTIVE' ? 'live' : m.status === 'FAILED' ? 'lost' : 'idle'}">
+    $('missionBox').innerHTML = list.length ? list.map(m => {
+      const hasPath = Array.isArray(m.path) && m.path.length > 1;
+      return `
+      <div class="row${selectedMission === m.id ? ' sel' : ''}" data-mission="${esc(m.id)}"
+           data-state="${m.status === 'ACTIVE' ? 'live' : m.status === 'FAILED' ? 'lost' : 'idle'}"
+           style="cursor:pointer">
         <div class="hd"><span>${esc(m.id)}</span>
           <span class="tag ${cls[m.status] || ''}">${esc(m.status)}</span></div>
         <div class="sub"><span>${esc(m.type)} · ${esc(m.posture)}</span>
           <span>${m.goal ? m.goal.map(v => n(v, 1)).join(', ') : (m.waypoints || []).length + ' wp'}</span></div>
         <div class="sub"><span>${esc(m.assigned || 'unassigned')}${m.in_flight ? ' · handshake' : ''}</span>
           <span>${m.cost === null || m.cost === undefined ? '—' : 'cost ' + m.cost}</span></div>
-        <div class="sub"><span></span>
+        <div class="sub">
+          <span class="${hasPath ? 'info' : 'muted'}">${hasPath
+            ? (selectedMission === m.id ? 'route shown' : 'show route')
+            : 'no route yet'}</span>
           <button class="ghost" data-cancel="${esc(m.id)}">Cancel</button></div>
-      </div>`).join('')
+      </div>`; }).join('')
       : '<p class="empty">Nothing dispatched yet.</p>';
+
+    $('missionBox').querySelectorAll('[data-mission]').forEach(r => r.onclick = e => {
+      if (e.target.closest('[data-cancel]')) return;   // cancelling shouldn't also toggle the route
+      selectedMission = selectedMission === r.dataset.mission ? null : r.dataset.mission;
+      missions(list); draw();
+    });
 
     $('missionBox').querySelectorAll('[data-cancel]').forEach(b => b.onclick = async () => {
       try { await post('/api/missions/cancel', { mission_id: b.dataset.cancel }); note('Cancelled.'); }

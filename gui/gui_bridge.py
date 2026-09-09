@@ -387,6 +387,7 @@ class MissionGateway:
         """
         enabled = bool(enabled)
         self.twin.autocomplete = enabled
+        self.twin.discoveries_gui = {}
         self.monitor.log("out", "discovery", "twin",
                          f"autocomplete {'on' if enabled else 'off'}", "warn")
         return enabled
