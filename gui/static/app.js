@@ -93,6 +93,16 @@ const App = (() => {
     return data;
   }
 
+  /* Same contract as post(): parsed JSON on 2xx, throws Error(data.error ||
+     status) otherwise. Added for on-demand fetches (e.g. expanding a
+     discovery card) that shouldn't wait for the next poll() tick. */
+  async function get(path) {
+    const r = await fetch(path, { cache: 'no-store' });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || `request failed (${r.status})`);
+    return data;
+  }
+
   function select(name) {
     sheet = name;
     document.querySelectorAll('main').forEach(m => m.classList.toggle('active', m.id === name));
@@ -112,5 +122,5 @@ const App = (() => {
     setInterval(poll, 250);
   }
 
-  return { $, el, n, pct, secs, clock, esc, kv, surface, post, register, boot, banner };
+  return { $, el, n, pct, secs, clock, esc, kv, surface, post, get, register, boot, banner };
 })();

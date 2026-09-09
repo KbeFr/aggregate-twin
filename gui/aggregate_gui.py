@@ -18,7 +18,10 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+from omegaconf import OmegaConf
+
 from gui.gui_bridge import CommMonitor, MissionGateway, enum_name, shape_of
+from gui.discovery_resolver import resolve_discovery_fields, apply_resolution
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -209,8 +212,32 @@ def _world_state(twin, monitor: CommMonitor) -> dict:
                   "origin_x": wc.origin_x, "origin_y": wc.origin_y,
                   "resolution": wc.resolution},
         "agents": agents, "obstacles": obstacles, "missions": missions,
+        "discoveries": _discoveries(twin),
         "options": _options(),
     }
+
+
+def _discoveries(twin) -> list[dict]:
+    """Lightweight view of twin.discoveries_gui for the collapsed card list --
+    the full per-field candidates are only fetched (via resolve_discovery_fields)
+    when the operator actually expands one, see /api/discoveries/<agent>/options."""
+    out = []
+    for agent_name, layers in twin.discoveries_gui.items():
+        reported = layers.get("reported")
+        kind = reported.get("kind") if reported else None
+        agent_type = reported.get("agent_type") if reported else None
+        reported_fields = [
+            k for k in (reported.keys() if reported else [])
+            if k != "timestamp" and not OmegaConf.is_missing(reported, k)
+        ]
+        out.append({
+            "id": agent_name,
+            "agent_name": agent_name,
+            "kind": None if kind in (None, "???") else str(kind),
+            "agent_type": None if agent_type in (None, "???") else str(agent_type),
+            "reported_fields": reported_fields,
+        })
+    return out
 
 
 def _options() -> dict:
@@ -355,6 +382,12 @@ def _make_handler(twin, monitor: CommMonitor, gateway: MissionGateway):
                     return self._json(_world_state(twin, monitor))
                 if path == "/api/network":
                     return self._json(_network_state(twin, monitor, gateway))
+                if path.startswith("/api/discoveries/") and path.endswith("/options"):
+                    agent_name = path[len("/api/discoveries/"):-len("/options")]
+                    layers = twin.discoveries_gui.get(agent_name)
+                    if layers is None:
+                        return self._json({"error": "unknown or already-resolved discovery"}, 404)
+                    return self._json({"id": agent_name, "fields": resolve_discovery_fields(layers)})
                 if path.startswith("/static/") or path.endswith((".html", ".css", ".js")):
                     return self._static(os.path.basename(path))
                 self._json({"error": "not found"}, 404)
@@ -379,6 +412,19 @@ def _make_handler(twin, monitor: CommMonitor, gateway: MissionGateway):
                     return self._json({"ok": True}, 202)
                 if path == "/api/release":
                     gateway.release(self._body().get("agent", ""))
+                    return self._json({"ok": True}, 202)
+                if path.startswith("/api/discoveries/") and path.endswith("/resolve"):
+                    agent_name = path[len("/api/discoveries/"):-len("/resolve")]
+                    layers = twin.discoveries_gui.get(agent_name)
+                    if layers is None:
+                        return self._json({"error": "unknown or already-resolved discovery"}, 404)
+                    final_fields = apply_resolution(layers, self._body().get("fields", {}))
+                    gateway.confirm_discovery(agent_name, final_fields)
+                    twin.discoveries_gui.pop(agent_name, None)
+                    return self._json({"ok": True, "agent_name": agent_name}, 202)
+                if path.startswith("/api/discoveries/") and path.endswith("/reject"):
+                    agent_name = path[len("/api/discoveries/"):-len("/reject")]
+                    twin.discoveries_gui.pop(agent_name, None)
                     return self._json({"ok": True}, 202)
                 self._json({"error": "not found"}, 404)
             except (ValueError, KeyError) as exc:

@@ -1,6 +1,6 @@
 /* world.js -- the field: every agent, every observation, every planned path. */
 (() => {
-  const { $, n, pct, esc, kv, surface, post } = App;
+  const { $, n, pct, esc, kv, surface, post, get } = App;
   const cv = $('cvWorld');
   const C = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
   // Canvas silently ignores an invalid/empty fillStyle or strokeStyle (keeps
@@ -189,6 +189,207 @@
       : `${list.length} agent(s) · ${(snap.obstacles || []).length} obstacle(s) · 1 square = ${step} m`;
   }
 
+  /* ---- discovery -------------------------------------------------------
+     A discovery notification is a DiscoveryMessage sitting in BINDING,
+     waiting for a human to confirm what the agent actually is before it's
+     instantiated. The collapsed list comes for free with every /api/world
+     poll (data.discoveries); the per-field candidates only get fetched
+     from /api/discoveries/<id>/options when a card is opened, since
+     resolving four config layers per agent isn't something we want to pay
+     for on every 250ms tick for agents nobody has looked at yet.
+
+     `discoCache[id]`  -- last options response for that id (fields spec)
+     `picks[id][name]` -- the operator's current choice for one field:
+                          { source: 'reported'|'instance'|'type'|'kind'|'custom',
+                            raw: <string, only meaningful when source==='custom'> }
+     `discoSeen`       -- ids the operator has already opened once, so the
+                          "new" marker only shows for things nobody has looked
+                          at yet. In-memory only (a page refresh re-surfaces
+                          "new" for anything still pending, which is fine --
+                          nothing is lost, it's just a look-at-me hint). */
+  let discoCache = {}, picks = {};
+  const discoSeen = new Set();
+
+  function summarize(v) {
+    if (v === null || v === undefined) return '—';
+    if (Array.isArray(v)) return v.length ? `${v.length} item${v.length === 1 ? '' : 's'}` : 'empty list';
+    if (typeof v === 'object') {
+      const name = v.name ?? Object.keys(v)[0] ?? '—';
+      const rest = Object.entries(v).filter(([k]) => k !== 'name').slice(0, 2)
+        .map(([k, val]) => `${k}=${val}`).join(' ');
+      return rest ? `${name} · ${rest}` : String(name);
+    }
+    return String(v);
+  }
+
+  function seedRaw(spec, value) {
+    if (spec.type === 'object' || spec.type === 'list') return JSON.stringify(value ?? null);
+    return (value === null || value === undefined) ? '' : String(value);
+  }
+
+  function discoNote(id, msg, bad) {
+    const p = $('dnote-' + id);
+    if (!p) return;
+    p.className = bad ? 'empty error' : 'empty ok';
+    p.textContent = msg;
+  }
+
+  function fieldRowHtml(id, name, spec) {
+    const opts = (spec.candidates || []).map(c => `
+      <button class="fopt" data-field="${esc(name)}" data-source="${esc(c.source)}"
+              aria-pressed="${spec.selected === c.source}" type="button">
+        ${esc(summarize(c.value))}<span class="src">${esc(c.label || c.source)}</span>
+      </button>`).join('');
+    const isCustom = spec.selected === 'custom';
+    return `
+      <div class="frow">
+        <div class="flabel">${esc(name)}</div>
+        <div class="fopts" data-fieldgroup="${esc(name)}">
+          ${opts}
+          <button class="fopt" data-field="${esc(name)}" data-source="custom"
+                  aria-pressed="${isCustom}" type="button">write my own<span class="src">custom</span></button>
+        </div>
+        <div class="fcustom${isCustom ? ' show' : ''}" id="fcustom-${id}-${esc(name)}">
+          ${spec.type === 'object' || spec.type === 'list'
+            ? `<textarea rows="2" data-custom="${esc(name)}" placeholder="JSON"></textarea>`
+            : `<input data-custom="${esc(name)}" placeholder="value">`}
+        </div>
+      </div>`;
+  }
+
+  function wireField(id, name, spec, formEl) {
+    const seed = (spec.candidates || []).find(c => c.source === spec.selected);
+    picks[id][name] = { source: spec.selected, raw: seedRaw(spec, seed ? seed.value : null) };
+
+    const group = formEl.querySelector(`[data-fieldgroup="${CSS.escape(name)}"]`);
+    const customBox = $(`fcustom-${id}-${name}`);
+    const customInput = customBox.querySelector('[data-custom]');
+    customInput.value = picks[id][name].raw;
+
+    group.querySelectorAll('.fopt').forEach(btn => btn.onclick = () => {
+      const src = btn.dataset.source;
+      picks[id][name].source = src;
+      group.querySelectorAll('.fopt').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+      customBox.classList.toggle('show', src === 'custom');
+      if (src === 'custom' && !customInput.value) {
+        const fallback = (spec.candidates || [])[0];
+        customInput.value = fallback ? seedRaw(spec, fallback.value) : '';
+        picks[id][name].raw = customInput.value;
+      }
+    });
+
+    customInput.oninput = () => {
+      picks[id][name] = { source: 'custom', raw: customInput.value };
+      group.querySelectorAll('.fopt').forEach(b =>
+        b.setAttribute('aria-pressed', String(b.dataset.source === 'custom')));
+      customBox.classList.add('show');
+    };
+  }
+
+  function renderDiscoveryForm(id, formEl) {
+    const fields = (discoCache[id] || {}).fields || {};
+    picks[id] = picks[id] || {};
+    formEl.innerHTML = Object.entries(fields).map(([name, spec]) => fieldRowHtml(id, name, spec)).join('')
+      + `<div class="dactions">
+           <button class="primary" data-accept="${id}" type="button">Accept</button>
+           <button class="ghost" data-reject="${id}" type="button">Reject</button>
+         </div>
+         <p class="empty" id="dnote-${id}"></p>`;
+    Object.entries(fields).forEach(([name, spec]) => wireField(id, name, spec, formEl));
+    formEl.querySelector(`[data-accept="${id}"]`).onclick = () => submitDiscovery(id);
+    formEl.querySelector(`[data-reject="${id}"]`).onclick = () => rejectDiscovery(id);
+  }
+
+  async function loadDiscoveryFields(id, formEl) {
+    if (discoCache[id]) { renderDiscoveryForm(id, formEl); return; }
+    formEl.innerHTML = '<p class="empty">Loading fields…</p>';
+    try {
+      const data = await get(`/api/discoveries/${encodeURIComponent(id)}/options`);
+      discoCache[id] = data;
+      renderDiscoveryForm(id, formEl);
+    } catch (e) {
+      formEl.innerHTML = `<p class="empty error">${esc(e.message)}</p>`;
+    }
+  }
+
+  async function submitDiscovery(id) {
+    const fields = (discoCache[id] || {}).fields || {};
+    const payload = {};
+    let badField = null;
+    Object.entries(fields).forEach(([name, spec]) => {
+      const pick = (picks[id] || {})[name] || { source: spec.selected };
+      if (pick.source !== 'custom') { payload[name] = { source: pick.source }; return; }
+      const raw = pick.raw ?? '';
+      if (spec.type === 'object' || spec.type === 'list') {
+        try { payload[name] = { source: 'custom', value: raw.trim() ? JSON.parse(raw) : null }; }
+        catch (_) { badField = name; }
+      } else if (spec.type === 'number') {
+        payload[name] = { source: 'custom', value: raw === '' ? null : Number(raw) };
+      } else {
+        payload[name] = { source: 'custom', value: raw };
+      }
+    });
+    if (badField) { discoNote(id, `"${badField}" isn't valid JSON.`, true); return; }
+    try {
+      const r = await post(`/api/discoveries/${encodeURIComponent(id)}/resolve`, { fields: payload });
+      discoNote(id, `Accepted as ${r.agent_name || id}.`, false);
+      delete discoCache[id];
+    } catch (e) { discoNote(id, e.message, true); }
+  }
+
+  async function rejectDiscovery(id) {
+    try {
+      await post(`/api/discoveries/${encodeURIComponent(id)}/reject`, {});
+      discoNote(id, 'Rejected.', false);
+    } catch (e) { discoNote(id, e.message, true); }
+  }
+
+  function discoveryRow(d) {
+    const isNew = !discoSeen.has(d.id);
+    const fieldCount = (d.reported_fields || []).length;
+    return `
+      <div class="row" data-discovery="${esc(d.id)}">
+        <div class="hd" data-toggle="${esc(d.id)}">
+          <span>${esc(d.agent_name || d.id)}</span><span class="tag">${esc(d.kind || '?')}</span>
+        </div>
+        <div class="sub">
+          <span>${esc(d.agent_type || 'type unset')}</span>
+          <span class="${isNew ? 'warn' : ''}">${isNew ? 'new · ' : ''}${fieldCount} field${fieldCount === 1 ? '' : 's'} reported</span>
+        </div>
+        <div class="dform" id="dform-${esc(d.id)}"></div>
+      </div>`;
+  }
+  let lastDiscoSig = '';
+
+  function discoveries(list) {
+    list = list || [];
+    // Create a signature of the IDs currently pending
+    const sig = list.map(d => d.id).join(',');
+
+    // If an operator is currently typing or has a form open, DO NOT wipe the DOM
+    const isInteracting = document.querySelector('#discoveryBox .dform.open');
+    if (sig === lastDiscoSig || isInteracting) {
+    // Still update the badge counter in case the count changed
+    $('discoveryCount').textContent = `${list.length} waiting`;
+    return;
+    }
+
+  lastDiscoSig = sig;
+    $('discoveryCount').textContent = `${list.length} waiting`;
+    $('discoveryBox').innerHTML = list.length
+      ? list.map(discoveryRow).join('')
+      : '<p class="empty">No agents announcing themselves right now.</p>';
+
+    $('discoveryBox').querySelectorAll('[data-toggle]').forEach(h => h.onclick = () => {
+      const id = h.dataset.toggle;
+      discoSeen.add(id);
+      const form = $('dform-' + id);
+      const opening = !form.classList.contains('open');
+      form.classList.toggle('open');
+      if (opening) loadDiscoveryFields(id, form);
+    });
+  }
+
   /* ---- side panels ---------------------------------------------------- */
   function fleet(list) {
     list = list || [];
@@ -332,6 +533,7 @@
     render(data) {
       snap = data;
       fillOptions(data.options);
+      discoveries(data.discoveries);
       fleet(data.agents);
       missions(data.missions);
       obstaclesPanel(data.obstacles);

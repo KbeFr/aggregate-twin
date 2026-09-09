@@ -365,6 +365,23 @@ class MissionGateway:
         mission.mission_status = MissionStatus.CANCELLED
         return True
 
+    def confirm_discovery(self, agent_name: str, fields: dict) -> None:
+        """Build the operator-resolved DiscoveryMessage and hand it to the
+        twin's gui_trigger_discovery(), the same entrypoint check_discovery()
+        documents for the human-review path."""
+        from core_msgs.global_msgs.global_payloads import DiscoveryMessage
+        from core_msgs.agents_contract import AgentKind
+
+        fields = dict(fields)
+        if isinstance(fields.get("kind"), str):
+            fields["kind"] = AgentKind(fields["kind"])
+        msg = DiscoveryMessage(**fields)
+
+        self._command("gui_trigger_discovery",
+                      lambda: self.twin.gui_trigger_discovery(msg),
+                      discovery_msg=msg)
+        self.monitor.log("out", "discovery", agent_name, "confirmed via console", "ok")
+
     def release(self, agent_name: str) -> None:
         if not agent_name:
             raise ValueError("no agent given")

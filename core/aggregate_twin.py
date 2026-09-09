@@ -2,6 +2,12 @@ from __future__ import annotations
 
 import logging
 import queue
+from dataclasses import fields
+from pathlib import Path
+from typing import Any
+
+import omegaconf
+from omegaconf import OmegaConf, ListConfig, MissingMandatoryValue
 
 from core_msgs.topic_contract import MessageType
 from core_msgs.global_msgs.global_payloads import DiscoveryMessage
@@ -19,7 +25,9 @@ from core.world_handler import WorldConfig
 from core.fleet.fleet_registry import FleetRegistry
 from core.functions.grid_map import GlobalGridMap
 from core.functions.mission_planner import MissionPlanner
+from core_msgs.utils.utils import load_config
 
+AGENT_CONFIG_PATH = "config/agent_configs"
 
 class AggregateTwin(MessageDispatcher):
     """
@@ -86,12 +94,31 @@ class AggregateTwin(MessageDispatcher):
         self._pending_discovery: dict[str, DiscoveryMessage] = {}
         self._instance_obstacles: dict[str, ObstacleObservation] = {}
 
+        self.discoveries_gui : dict = {}
+        self.autocomplete = False #True -> use all configs possible to autocomplete the missing robot config
+                                 #False -> ask the human first (with options from config or custom)
+        self.agent_configs = self.load_agent_configs(AGENT_CONFIG_PATH)
+
         self.logger.debug("Init complete. namespace=%s resolution=%.3f loop_freq=%d",
              self.namespace, effective_resolution, loop_freq)
 
 
     def setup_transport(self, transport):
         self.transport = transport
+
+
+    def load_agent_configs(self, path : str | Path ) -> dict:
+        agent_config = {}
+        # go through all the folders in AGENT_CONFIG_PATH, then the files in them and store them
+        #dict[folder_first_work][file_first_word] = config.yaml
+
+        for item in Path(path).iterdir():
+            if item.is_dir():
+                agent_config[item.name.split("_")[0]] = self.load_agent_configs(item)
+            elif item.is_file():
+                agent_config[item.name.split("_")[0]] = load_config(item)
+        return agent_config
+
 
 
     # ------------------------------------------------------------------
@@ -157,12 +184,87 @@ class AggregateTwin(MessageDispatcher):
 
         self.logger.debug("Discovery received: agent=%s", agent_name)
 
+        discovery_msg = self.check_discovery(msg)
+        if discovery_msg is not None:
+            self._pending_discovery[agent_name] = discovery_msg
+            self._request_instance(agent_name, discovery_msg)
 
 
+    def gui_trigger_discovery(self, discovery_msg: DiscoveryMessage) -> None:
+        """ Called from gui when discovery is confirmed """
+        agent_name = discovery_msg.agent_name
+        self._pending_discovery[agent_name] = discovery_msg
+        self._request_instance(agent_name, discovery_msg)
 
+    def check_discovery(self, msg : DiscoveryMessage) -> DiscoveryMessage | None:
 
-        self._pending_discovery[agent_name] = msg
-        self._request_instance(agent_name, msg)
+        layers: dict[str, Any] = {"reported": self.structured(msg)}
+
+        agent_kind = msg.kind.value  # ugv, uav
+
+        # layer 1 -> on agent_name level
+        agent_specific = self.agent_configs.get("agent", {}).get(msg.agent_name)
+        if agent_specific is not None:
+            layers["agent"] = OmegaConf.create(agent_specific)
+
+        # layer 2 -> on agent_type level (based on kind)
+        type_specific = self.agent_configs.get(agent_kind, {}).get(msg.agent_type)
+        if type_specific is not None:
+            layers["type"] = OmegaConf.create(type_specific)
+
+        # layer 3 -> default kind configs
+        default_kind = self.agent_configs.get(agent_kind, {}).get("default")
+        if default_kind is not None:
+            layers["kind"] = OmegaConf.create(default_kind)
+
+        if self.autocomplete:
+            # lowest priority first, so later entries win the merge:
+            # kind default < type default < agent-specific < self-reported
+            ordered = [layers[k] for k in ("kind", "type", "agent", "reported") if k in layers]
+            disc = OmegaConf.merge(*ordered)
+
+            # can check the missing still, but will just log and not act on it for now
+            container = OmegaConf.to_container(disc, throw_on_missing=False)
+            missing = [k for k, v in container.items() if v == "???"]
+            if missing:
+                self.logger.warning(
+                    "agent=%s: no config layer (or self-report) could fill %s, leaving as None",
+                    msg.agent_name, ", ".join(missing))
+                for k in missing:
+                    container[k] = None
+
+            return DiscoveryMessage(**container)
+
+        else:
+            # here the gui will first ask human intervention and validation of discovery
+            self.discoveries_gui[msg.agent_name] = layers
+            print("HEY")
+            return None  # wait for gui to trigger
+
+    @staticmethod
+    def structured(obj):
+        """ omegaconf only treats "???" as not filled in for some reason """
+        import copy
+        obj = copy.copy(obj)  # don't mutate the caller's live DiscoveryMessage
+        for field in fields(obj.__class__):
+            value = getattr(obj, field.name)
+            setattr(obj, field.name, "???" if value is None else AggregateTwin._sanitize(value))
+        return OmegaConf.structured(obj)
+
+    @staticmethod
+    def _sanitize(value):
+        """Recursively swap numpy scalars/arrays for native Python types"""
+        if isinstance(value, dict):
+            return {k: AggregateTwin._sanitize(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [AggregateTwin._sanitize(v) for v in value]
+        tolist = getattr(value, "tolist", None)
+        if callable(tolist) and not isinstance(value, (str, bytes)):
+            try:
+                return AggregateTwin._sanitize(tolist())
+            except Exception:
+                pass
+        return value
 
     @handles(MessageType.INSTANTIATE)
     def _handle_instantiate_reply(self, env: InstantiateEnvelope) -> None:

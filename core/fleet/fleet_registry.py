@@ -102,7 +102,6 @@ class FleetRegistry:
         snap = self._agents.get(agent_id)
         return snap.kind if snap else default
 
-
     def agent_of(self, instance_name: str) -> str | None:
         return self._instance_to_agent.get(instance_name)
 
