@@ -382,6 +382,15 @@ class MissionGateway:
                       discovery_msg=msg)
         self.monitor.log("out", "discovery", agent_name, "confirmed via console", "ok")
 
+    def set_autocomplete(self, enabled: bool) -> bool:
+        """Switch discovery handling between auto-merge and human review.
+        """
+        enabled = bool(enabled)
+        self.twin.autocomplete = enabled
+        self.monitor.log("out", "discovery", "twin",
+                         f"autocomplete {'on' if enabled else 'off'}", "warn")
+        return enabled
+
     def release(self, agent_name: str) -> None:
         if not agent_name:
             raise ValueError("no agent given")

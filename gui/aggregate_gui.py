@@ -152,6 +152,7 @@ def _header(twin, monitor: CommMonitor) -> dict:
         "linked": linked,
         "pending": len(twin._pending_discovery),
         "lifecycle": "LIVE" if linked else ("BINDING" if twin._pending_discovery else "IDLE"),
+        "autocomplete": bool(getattr(twin, "autocomplete", True)),
     }
 
 
@@ -413,6 +414,9 @@ def _make_handler(twin, monitor: CommMonitor, gateway: MissionGateway):
                 if path == "/api/release":
                     gateway.release(self._body().get("agent", ""))
                     return self._json({"ok": True}, 202)
+                if path == "/api/autocomplete":
+                    enabled = gateway.set_autocomplete(self._body().get("enabled", True))
+                    return self._json({"ok": True, "autocomplete": enabled}, 202)
                 if path.startswith("/api/discoveries/") and path.endswith("/resolve"):
                     agent_name = path[len("/api/discoveries/"):-len("/resolve")]
                     layers = twin.discoveries_gui.get(agent_name)

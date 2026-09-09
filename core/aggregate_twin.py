@@ -116,7 +116,7 @@ class AggregateTwin(MessageDispatcher):
             if item.is_dir():
                 agent_config[item.name.split("_")[0]] = self.load_agent_configs(item)
             elif item.is_file():
-                agent_config[item.name.split("_")[0]] = load_config(item)
+                agent_config[item.name.split("__")[0]] = load_config(item)
         return agent_config
 
 
@@ -238,7 +238,6 @@ class AggregateTwin(MessageDispatcher):
         else:
             # here the gui will first ask human intervention and validation of discovery
             self.discoveries_gui[msg.agent_name] = layers
-            print("HEY")
             return None  # wait for gui to trigger
 
     @staticmethod

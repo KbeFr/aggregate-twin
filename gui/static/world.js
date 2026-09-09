@@ -192,38 +192,50 @@
   /* ---- discovery -------------------------------------------------------
      A discovery notification is a DiscoveryMessage sitting in BINDING,
      waiting for a human to confirm what the agent actually is before it's
-     instantiated. The collapsed list comes for free with every /api/world
-     poll (data.discoveries); the per-field candidates only get fetched
-     from /api/discoveries/<id>/options when a card is opened, since
-     resolving four config layers per agent isn't something we want to pay
-     for on every 250ms tick for agents nobody has looked at yet.
+     instantiated. Lives in a slide-out drawer (triggered from .field, top
+     right) rather than inline in the aside -- gives it room for full
+     candidate values instead of clipped one-line summaries, and keeps it
+     out of the way when nothing needs attention.
 
-     `discoCache[id]`  -- last options response for that id (fields spec)
-     `picks[id][name]` -- the operator's current choice for one field:
-                          { source: 'reported'|'instance'|'type'|'kind'|'custom',
-                            raw: <string, only meaningful when source==='custom'> }
-     `discoSeen`       -- ids the operator has already opened once, so the
-                          "new" marker only shows for things nobody has looked
-                          at yet. In-memory only (a page refresh re-surfaces
-                          "new" for anything still pending, which is fine --
-                          nothing is lost, it's just a look-at-me hint). */
-  let discoCache = {}, picks = {};
-  const discoSeen = new Set();
+     State:
+       `discoList`     -- latest collapsed list from /api/world (every poll)
+       `discoCache[id]`-- last /options response for that id (fields spec)
+       `picks[id][name]` -- the operator's current choice for one field:
+                            { source: 'reported'|'instance'|'type'|'kind'|'custom',
+                              raw: <string, only meaningful when source==='custom'> }
+       `activeDiscoId` -- which agent's field-review is showing, or null for
+                          the list view. This is the actual fix for the "can't
+                          keep a card open" bug: earlier this rebuilt the
+                          whole box from scratch every poll tick (250ms),
+                          which reset any open form and lost typed input
+                          before you could finish it. Now the drawer body is
+                          only ever rebuilt on explicit navigation (open,
+                          back, row click) -- never from a poll -- so nothing
+                          touches the DOM while a form is up. The badge count
+                          still updates live every poll regardless.
+       `discoListSig`  -- signature of the pending id set, so reopening onto
+                          the list view doesn't do pointless work if nothing
+                          changed since it was last shown. */
+  let discoList = [], discoCache = {}, picks = {}, activeDiscoId = null;
+  let drawerOpen = false, discoListSig = null;
 
-  function summarize(v) {
+  function formatValue(v) {
     if (v === null || v === undefined) return '—';
-    if (Array.isArray(v)) return v.length ? `${v.length} item${v.length === 1 ? '' : 's'}` : 'empty list';
-    if (typeof v === 'object') {
-      const name = v.name ?? Object.keys(v)[0] ?? '—';
-      const rest = Object.entries(v).filter(([k]) => k !== 'name').slice(0, 2)
-        .map(([k, val]) => `${k}=${val}`).join(' ');
-      return rest ? `${name} · ${rest}` : String(name);
-    }
+    if (typeof v === 'object') return JSON.stringify(v, null, 2);
     return String(v);
   }
 
+  /* One-line, length-capped rendering for inside <option> text -- the full
+     value gets its own block underneath, so this only has to be enough to
+     tell two layers' values apart at a glance. */
+  function preview(v) {
+    if (v === null || v === undefined) return 'not set';
+    const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
+    return s.length > 42 ? s.slice(0, 41) + '…' : s;
+  }
+
   function seedRaw(spec, value) {
-    if (spec.type === 'object' || spec.type === 'list') return JSON.stringify(value ?? null);
+    if (spec.type === 'object' || spec.type === 'list') return JSON.stringify(value ?? null, null, 2);
     return (value === null || value === undefined) ? '' : String(value);
   }
 
@@ -234,82 +246,145 @@
     p.textContent = msg;
   }
 
-  function fieldRowHtml(id, name, spec) {
-    const opts = (spec.candidates || []).map(c => `
-      <button class="fopt" data-field="${esc(name)}" data-source="${esc(c.source)}"
-              aria-pressed="${spec.selected === c.source}" type="button">
-        ${esc(summarize(c.value))}<span class="src">${esc(c.label || c.source)}</span>
-      </button>`).join('');
-    const isCustom = spec.selected === 'custom';
-    return `
-      <div class="frow">
-        <div class="flabel">${esc(name)}</div>
-        <div class="fopts" data-fieldgroup="${esc(name)}">
-          ${opts}
-          <button class="fopt" data-field="${esc(name)}" data-source="custom"
-                  aria-pressed="${isCustom}" type="button">write my own<span class="src">custom</span></button>
-        </div>
-        <div class="fcustom${isCustom ? ' show' : ''}" id="fcustom-${id}-${esc(name)}">
-          ${spec.type === 'object' || spec.type === 'list'
-            ? `<textarea rows="2" data-custom="${esc(name)}" placeholder="JSON"></textarea>`
-            : `<input data-custom="${esc(name)}" placeholder="value">`}
-        </div>
+  function updateDiscoveryBadge() {
+    $('discoveryTrigger').classList.toggle('has', discoList.length > 0);
+    $('discoveryBadge').textContent = discoList.length;
+    $('discoveryDrawerCount').textContent = `${discoList.length} pending`;
+  }
+
+  function openDrawer() {
+    drawerOpen = true;
+    $('discoveryDrawer').classList.add('open');
+    $('discoveryDrawer').setAttribute('aria-hidden', 'false');
+    $('discoveryTrigger').setAttribute('aria-expanded', 'true');
+    if (activeDiscoId && discoCache[activeDiscoId]) { renderDiscoDetail(activeDiscoId); return; }
+    activeDiscoId = null;
+    discoListSig = null;   // force a render even if the id set is unchanged since last close
+    renderDiscoList();
+  }
+
+  function closeDrawer() {
+    drawerOpen = false;
+    $('discoveryDrawer').classList.remove('open');
+    $('discoveryDrawer').setAttribute('aria-hidden', 'true');
+    $('discoveryTrigger').setAttribute('aria-expanded', 'false');
+  }
+
+  function backToList() {
+    activeDiscoId = null;
+    discoListSig = null;
+    renderDiscoList();
+  }
+
+  function renderDiscoList() {
+    discoListSig = discoList.map(d => d.id).join(',');
+    const box = $('discoveryBox');
+    if (!discoList.length) {
+      box.innerHTML = '<section><p class="empty">No agents announcing themselves right now.</p></section>';
+      return;
+    }
+    box.innerHTML = `<section>${discoList.map(d => {
+      const fieldCount = (d.reported_fields || []).length;
+      return `
+      <div class="row" data-state="idle" data-open="${esc(d.id)}">
+        <div class="hd"><span>${esc(d.agent_name || d.id)}</span><span class="tag">${esc(d.kind || '?')}</span></div>
+        <div class="sub"><span>${esc(d.agent_type || 'type unset')}</span>
+          <span>${fieldCount} field${fieldCount === 1 ? '' : 's'} reported</span></div>
       </div>`;
+    }).join('')}</section>`;
+    box.querySelectorAll('[data-open]').forEach(row => row.onclick = () => showDiscoDetail(row.dataset.open));
   }
 
-  function wireField(id, name, spec, formEl) {
-    const seed = (spec.candidates || []).find(c => c.source === spec.selected);
-    picks[id][name] = { source: spec.selected, raw: seedRaw(spec, seed ? seed.value : null) };
-
-    const group = formEl.querySelector(`[data-fieldgroup="${CSS.escape(name)}"]`);
-    const customBox = $(`fcustom-${id}-${name}`);
-    const customInput = customBox.querySelector('[data-custom]');
-    customInput.value = picks[id][name].raw;
-
-    group.querySelectorAll('.fopt').forEach(btn => btn.onclick = () => {
-      const src = btn.dataset.source;
-      picks[id][name].source = src;
-      group.querySelectorAll('.fopt').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
-      customBox.classList.toggle('show', src === 'custom');
-      if (src === 'custom' && !customInput.value) {
-        const fallback = (spec.candidates || [])[0];
-        customInput.value = fallback ? seedRaw(spec, fallback.value) : '';
-        picks[id][name].raw = customInput.value;
-      }
-    });
-
-    customInput.oninput = () => {
-      picks[id][name] = { source: 'custom', raw: customInput.value };
-      group.querySelectorAll('.fopt').forEach(b =>
-        b.setAttribute('aria-pressed', String(b.dataset.source === 'custom')));
-      customBox.classList.add('show');
-    };
+  function detailShell(id, inner) {
+    const meta = discoList.find(d => d.id === id) || {};
+    return `<section>
+        <div class="eyebrow">${esc(meta.agent_name || id)}
+          <u>${esc(meta.kind || '?')}${meta.agent_type ? ' · ' + esc(meta.agent_type) : ''}</u></div>
+        <button class="ghost" data-back type="button">&larr; All discoveries</button>
+      </section>
+      <section>${inner}</section>`;
   }
 
-  function renderDiscoveryForm(id, formEl) {
-    const fields = (discoCache[id] || {}).fields || {};
-    picks[id] = picks[id] || {};
-    formEl.innerHTML = Object.entries(fields).map(([name, spec]) => fieldRowHtml(id, name, spec)).join('')
-      + `<div class="dactions">
-           <button class="primary" data-accept="${id}" type="button">Accept</button>
-           <button class="ghost" data-reject="${id}" type="button">Reject</button>
-         </div>
-         <p class="empty" id="dnote-${id}"></p>`;
-    Object.entries(fields).forEach(([name, spec]) => wireField(id, name, spec, formEl));
-    formEl.querySelector(`[data-accept="${id}"]`).onclick = () => submitDiscovery(id);
-    formEl.querySelector(`[data-reject="${id}"]`).onclick = () => rejectDiscovery(id);
-  }
-
-  async function loadDiscoveryFields(id, formEl) {
-    if (discoCache[id]) { renderDiscoveryForm(id, formEl); return; }
-    formEl.innerHTML = '<p class="empty">Loading fields…</p>';
+  async function showDiscoDetail(id) {
+    activeDiscoId = id;
+    const box = $('discoveryBox');
+    if (discoCache[id]) { renderDiscoDetail(id); return; }
+    box.innerHTML = detailShell(id, '<p class="empty">Loading configuration layers…</p>');
+    box.querySelector('[data-back]').onclick = backToList;
     try {
       const data = await get(`/api/discoveries/${encodeURIComponent(id)}/options`);
       discoCache[id] = data;
-      renderDiscoveryForm(id, formEl);
+      picks[id] = picks[id] || {};
+      if (activeDiscoId === id) renderDiscoDetail(id);   // could've navigated away while this was in flight
     } catch (e) {
-      formEl.innerHTML = `<p class="empty error">${esc(e.message)}</p>`;
+      if (activeDiscoId !== id) return;
+      box.innerHTML = detailShell(id, `<p class="empty error">${esc(e.message)}</p>`);
+      box.querySelector('[data-back]').onclick = backToList;
     }
+  }
+
+  function fieldHtml(id, name, spec) {
+    const opts = (spec.candidates || []).map(c =>
+      `<option value="${esc(c.source)}"${spec.selected === c.source ? ' selected' : ''}
+        >${esc(c.label || c.source)} — ${esc(preview(c.value))}</option>`).join('');
+    return `
+      <div class="dfield">
+        <label for="f-${esc(id)}-${esc(name)}">${esc(name)}</label>
+        <select id="f-${esc(id)}-${esc(name)}" data-field="${esc(name)}">
+          ${opts}<option value="custom">Custom — write my own</option>
+        </select>
+        <div class="dvalue" data-preview="${esc(name)}"></div>
+        <textarea class="dcustom" data-custom="${esc(name)}" rows="5" hidden
+                  spellcheck="false" aria-label="Custom value for ${esc(name)}"></textarea>
+      </div>`;
+  }
+
+  function wireField(id, name, spec, root) {
+    const q = sel => root.querySelector(sel);
+    const select = q(`select[data-field="${CSS.escape(name)}"]`);
+    const valueBox = q(`[data-preview="${CSS.escape(name)}"]`);
+    const custom = q(`textarea[data-custom="${CSS.escape(name)}"]`);
+    const valueOf = src => (spec.candidates || []).find(c => c.source === src)?.value;
+
+    function apply() {
+      if (select.value === 'custom') {
+        // Mirror whatever was showing when they switched over, so "custom"
+        // starts from a real config to edit rather than an empty box.
+        if (!custom.value) custom.value = picks[id][name].raw;
+        valueBox.hidden = true; custom.hidden = false;
+        picks[id][name] = { source: 'custom', raw: custom.value };
+      } else {
+        const v = valueOf(select.value);
+        valueBox.textContent = formatValue(v);
+        valueBox.classList.toggle('none', v === null || v === undefined);
+        valueBox.hidden = false; custom.hidden = true;
+        picks[id][name] = { source: select.value, raw: seedRaw(spec, v) };
+      }
+    }
+
+    picks[id][name] = { source: spec.selected, raw: seedRaw(spec, valueOf(spec.selected)) };
+    select.onchange = apply;
+    custom.oninput = () => { picks[id][name] = { source: 'custom', raw: custom.value }; };
+    apply();
+  }
+
+  function renderDiscoDetail(id) {
+    const fields = (discoCache[id] || {}).fields || {};
+    const names = Object.keys(fields);
+    const box = $('discoveryBox');
+    picks[id] = picks[id] || {};
+    box.innerHTML = detailShell(id, `
+      ${names.length ? names.map(name => fieldHtml(id, name, fields[name])).join('')
+                     : '<p class="empty">No configuration layer supplied a value for this agent.</p>'}
+      <div class="dactions">
+        <button class="primary" data-accept type="button">Accept</button>
+        <button data-reject type="button">Reject</button>
+      </div>
+      <p class="empty" id="dnote-${esc(id)}" style="margin-top:10px"></p>`);
+    names.forEach(name => wireField(id, name, fields[name], box));
+    box.querySelector('[data-back]').onclick = backToList;
+    box.querySelector('[data-accept]').onclick = () => submitDiscovery(id);
+    box.querySelector('[data-reject]').onclick = () => rejectDiscovery(id);
   }
 
   async function submitDiscovery(id) {
@@ -334,6 +409,7 @@
       const r = await post(`/api/discoveries/${encodeURIComponent(id)}/resolve`, { fields: payload });
       discoNote(id, `Accepted as ${r.agent_name || id}.`, false);
       delete discoCache[id];
+      setTimeout(() => { if (activeDiscoId === id) backToList(); }, 900);
     } catch (e) { discoNote(id, e.message, true); }
   }
 
@@ -341,53 +417,54 @@
     try {
       await post(`/api/discoveries/${encodeURIComponent(id)}/reject`, {});
       discoNote(id, 'Rejected.', false);
+      delete discoCache[id];
+      setTimeout(() => { if (activeDiscoId === id) backToList(); }, 700);
     } catch (e) { discoNote(id, e.message, true); }
   }
 
-  function discoveryRow(d) {
-    const isNew = !discoSeen.has(d.id);
-    const fieldCount = (d.reported_fields || []).length;
-    return `
-      <div class="row" data-discovery="${esc(d.id)}">
-        <div class="hd" data-toggle="${esc(d.id)}">
-          <span>${esc(d.agent_name || d.id)}</span><span class="tag">${esc(d.kind || '?')}</span>
-        </div>
-        <div class="sub">
-          <span>${esc(d.agent_type || 'type unset')}</span>
-          <span class="${isNew ? 'warn' : ''}">${isNew ? 'new · ' : ''}${fieldCount} field${fieldCount === 1 ? '' : 's'} reported</span>
-        </div>
-        <div class="dform" id="dform-${esc(d.id)}"></div>
-      </div>`;
+  $('discoveryTrigger').onclick = openDrawer;
+  $('discoveryScrim').onclick = closeDrawer;
+  $('discoveryClose').onclick = closeDrawer;
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && drawerOpen) closeDrawer(); });
+
+  /* ---- autocomplete mode ----------------------------------------------
+     Mirrors twin.autocomplete. `autoBusy` holds off the poll-driven sync
+     while a write is in flight, otherwise the next 250ms tick would arrive
+     with the old value and visibly flip the switch back under the operator
+     before the twin has applied the change. */
+  let autoBusy = false;
+
+  function paintAutocomplete(on) {
+    $('autoToggle').setAttribute('aria-checked', String(!!on));
+    $('autoHint').textContent = on
+      ? 'Discoveries are merged from configs automatically.'
+      : 'Discoveries wait here for review.';
   }
-  let lastDiscoSig = '';
+
+  function syncAutocomplete(twin) {
+    if (autoBusy || !twin || twin.autocomplete === undefined) return;
+    paintAutocomplete(twin.autocomplete);
+  }
+
+  $('autoToggle').onclick = async () => {
+    const next = $('autoToggle').getAttribute('aria-checked') !== 'true';
+    autoBusy = true;
+    paintAutocomplete(next);                       // optimistic; poll reconciles below
+    try {
+      const r = await post('/api/autocomplete', { enabled: next });
+      paintAutocomplete(r.autocomplete);
+    } catch (e) {
+      paintAutocomplete(!next);                    // put it back, the twin never changed
+      App.banner(`Could not change autocomplete — ${e.message}`);
+    } finally { autoBusy = false; }
+  };
 
   function discoveries(list) {
-    list = list || [];
-    // Create a signature of the IDs currently pending
-    const sig = list.map(d => d.id).join(',');
-
-    // If an operator is currently typing or has a form open, DO NOT wipe the DOM
-    const isInteracting = document.querySelector('#discoveryBox .dform.open');
-    if (sig === lastDiscoSig || isInteracting) {
-    // Still update the badge counter in case the count changed
-    $('discoveryCount').textContent = `${list.length} waiting`;
-    return;
-    }
-
-  lastDiscoSig = sig;
-    $('discoveryCount').textContent = `${list.length} waiting`;
-    $('discoveryBox').innerHTML = list.length
-      ? list.map(discoveryRow).join('')
-      : '<p class="empty">No agents announcing themselves right now.</p>';
-
-    $('discoveryBox').querySelectorAll('[data-toggle]').forEach(h => h.onclick = () => {
-      const id = h.dataset.toggle;
-      discoSeen.add(id);
-      const form = $('dform-' + id);
-      const opening = !form.classList.contains('open');
-      form.classList.toggle('open');
-      if (opening) loadDiscoveryFields(id, form);
-    });
+    discoList = list || [];
+    updateDiscoveryBadge();
+    if (!drawerOpen || activeDiscoId) return;   // nothing visible, or an operator is mid-review -- leave the DOM alone
+    const sig = discoList.map(d => d.id).join(',');
+    if (sig !== discoListSig) renderDiscoList();
   }
 
   /* ---- side panels ---------------------------------------------------- */
@@ -533,6 +610,7 @@
     render(data) {
       snap = data;
       fillOptions(data.options);
+      syncAutocomplete(data.twin);
       discoveries(data.discoveries);
       fleet(data.agents);
       missions(data.missions);
