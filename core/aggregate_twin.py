@@ -15,7 +15,7 @@ from core_msgs.instance_aggregate.payloads import ObstacleObservation, TwinState
 from core_msgs.instance_aggregate.instantiate_handshake import InstantiateInitiator, InstantiateEnvelope, \
     InstantiateAction
 from core_msgs.instance_aggregate.mission_handshake import MissionSession,  MissionEnvelope, SessionState
-from core_msgs.instance_aggregate.mission import Mission, MissionStatus
+from core_msgs.instance_aggregate.mission import Mission, MissionStatus, POSTURE_WEIGHTS
 from core_msgs.utils.dispatch import handles, MessageDispatcher
 
 from core.functions.a_star_custom import AStarPlannerCustom
@@ -376,17 +376,16 @@ class AggregateTwin(MessageDispatcher):
         self._sim_step += 1
         self._drain_inbox()
 
+        if self._sim_step % self.perception_period == 0:
+            now = self._sim_step
+            self.obstacles.prune(now)
+            self.grid_map.update_perception(self.obstacles.observations())
 
         if self._sim_step % self.plan_period == 0 or self._sim_step == 1:
             self.logger.debug("Draining %d mission(s)", len(self.pending_missions))
             self.plan_and_auction()
 
         self._sweep_sessions()
-
-        if self._sim_step % self.perception_period == 0:
-            now = self._sim_step
-            self.obstacles.prune(now)
-            self.grid_map.update_perception(self.obstacles.observations())
 
     def _drain_inbox(self, budget: int = 512) -> None:
         for _ in range(budget):
@@ -450,6 +449,7 @@ class AggregateTwin(MessageDispatcher):
             return None
 
         return winner
+
 
 
     def detect_perception_faults(self, observations) -> None:

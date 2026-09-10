@@ -61,7 +61,8 @@ class MissionPlanner:
             scored.sort(key=lambda t: t[0])
             if scored:
                 out.append((m, {
-                    name: MissionPlanHint(distance=r.distance, plan_cost=c, path=r.path)
+                    name: MissionPlanHint(distance=r.distance, plan_cost=c,
+                                           path=self._path_as_points(r.path))
                     for c, name, r in scored[:k]
                 }))
         return out
@@ -83,20 +84,34 @@ class MissionPlanner:
 
 
 
-
-    # TODO :rework
+    # TODO : Not used
     def replan(
             self,
             ugv : AgentEntry,
             mission: Mission,
             weights: tuple,
             reason: str = "triggered",
-    ) -> np.ndarray | None:
-        """
-        Replan a specific UGV/mission pair.  Called by the Overarching Twin
-        when a dynamic obstacle enters the path or battery drops.
-        """
-        pass
+    ) -> list[tuple[float, float]] | None:
+        """Replan a specific UGV/mission pair."""
+        goal = self._resolve_goal(mission)
+        if goal is None:
+            logger.debug("replan skipped: mission=%s has no resolvable goal (reason=%s)",
+                               mission.mission_id, reason)
+            return None
+
+        result = self._plan(ugv, ugv.xy, goal, weights)
+        if not result.feasible:
+            logger.warning(
+                "replan infeasible: agent=%s mission=%s reason=%s (%s)",
+                ugv.name, mission.mission_id, reason, result.reason,
+            )
+            return None
+
+        logger.info(
+            "replanned agent=%s mission=%s reason=%s cost=%.2f distance=%.2f",
+            ugv.name, mission.mission_id, reason, result.cost, result.distance,
+        )
+        return self._path_as_points(result.path)
 
     # TODO : Not used
     def posture_for_battery(self, battery_pct: float) -> MissionPlanHint:
@@ -122,6 +137,10 @@ class MissionPlanner:
             weights=weights,
             agent_radius=getattr(ugv, "radius", 0.25),
         )
+
+    @staticmethod
+    def _path_as_points(path: np.ndarray) -> list[tuple[float, float]]:
+        return [(float(x), float(y)) for x, y in zip(path[0], path[1])]
 
     def _resolve_goal(
             self,
@@ -149,4 +168,3 @@ class MissionPlanner:
 def _norm(values):
     lo, hi = min(values), max(values)
     return (lambda v: 0.0) if hi - lo < 1e-12 else (lambda v: (v - lo) / (hi - lo))
-

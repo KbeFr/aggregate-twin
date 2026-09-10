@@ -249,11 +249,7 @@ class GlobalGridMap:
                      count, int(grid.sum()))
 
     def update_perception(self, obstacles: Iterable) -> None:
-        """Replace the dynamic layer with the current perceived obstacles.
-
-        Static obstacles are untouched — call :meth:`set_static_obstacles` for
-        those. Costs one rasterisation of the moving obstacles only.
-        """
+        """Replace the perceived layer with every currently reported obstacle"""
         grid = self._blank()
         seen: dict[str, ObstacleShape] = {}
         for raw in obstacles:
@@ -261,8 +257,7 @@ class GlobalGridMap:
             if shape is None:
                 continue
             seen[shape.id] = shape
-            if shape.dynamic:
-                self._rasterise(grid, shape)
+            self._rasterise(grid, shape)
         self._dynamic = grid
         self._obstacles.update(seen)
         self._invalidate()
