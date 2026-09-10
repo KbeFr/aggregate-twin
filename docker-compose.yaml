@@ -1,0 +1,19 @@
+services:
+  aggregate_twin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aggregate_twin
+    environment:
+      MQTT_BROKER_HOST: mqtt-broker
+      REDIS_HOST: redis
+      TWIN_NAMESPACE: digitaltwin
+      TWIN_GUI_PORT: "8082"
+    ports:
+      - "8082:8082"
+    networks:
+      - flexia_net
+
+networks:
+  flexia_net:
+    external: true
