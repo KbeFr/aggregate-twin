@@ -42,5 +42,5 @@ Aggregate_Twin_Config:
 
   application_Descriptor:
     connectorID_type: static
-    connectorID: "irsim-twin"
+    connectorID: "twin-project"
     id: "{node_id}"

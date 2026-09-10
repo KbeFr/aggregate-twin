@@ -242,7 +242,7 @@ class AggregateTwin(MessageDispatcher):
 
     @staticmethod
     def structured(obj):
-        """ omegaconf only treats "???" as not filled in for some reason """
+        """ omegaconf only treats "???" as not filled in for some reason, so convert None -> "???" """
         import copy
         obj = copy.copy(obj)  # don't mutate the caller's live DiscoveryMessage
         for field in fields(obj.__class__):
