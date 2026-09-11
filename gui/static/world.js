@@ -74,9 +74,14 @@
     (agents || []).forEach(a => {
       const pts = a.path;
       if (!Array.isArray(pts) || pts.length < 2) return;
-      const hot = !selected || selected === a.name;
-      ctx.lineWidth = hot ? 1.8 : 1;
-      ctx.strokeStyle = hot ? 'rgba(127,209,222,.75)' : 'rgba(127,209,222,.2)';
+
+      // Show path only if this specific agent or its assigned mission is selected
+      const isAgentSelected = selected && selected === a.name;
+      const isMissionSelected = selectedMission && a.mission_id === selectedMission;
+      if (!isAgentSelected && !isMissionSelected) return;
+
+      ctx.lineWidth = 1.8;
+      ctx.strokeStyle = 'rgba(127,209,222,.75)';
       ctx.beginPath();
       pts.forEach((p, i) => i ? ctx.lineTo(T.toX(p[0]), T.toY(p[1]))
                               : ctx.moveTo(T.toX(p[0]), T.toY(p[1])));

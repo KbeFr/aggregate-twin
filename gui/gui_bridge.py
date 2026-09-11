@@ -247,10 +247,7 @@ class CommMonitor:
         up anywhere in the log at all."""
         if env is None:
             return
-        # the 'instantiate' topic is inout for the aggregate itself, so it
-        # also receives its own outgoing envelopes as an echo - same guard
-        # _handle_instantiate_reply applies internally, needed here too
-        # since the wrapper fires regardless of what the original did.
+
         if getattr(env, "sender", None) == getattr(self.twin, "name", None):
             return
         agent_name = getattr(env, "agent_name", None)
@@ -280,15 +277,19 @@ class CommMonitor:
             self.peer(agent).ch["mission_out"].hit()
         self.log("out", "mission", agent or "—", f"CANCEL · {mission_id}", "warn")
 
-    def _on_mission_reply(self, instance_name, payload=None, *a, **k) -> None:
+    def _on_mission_reply(self, instance_name, env=None, *a, **k) -> None:
+        #replay guard
+        if env.sender == self.twin.name:
+            return
+
         agent = self.twin.fleet.agent_of(instance_name)
         if not agent:
             # A reply from an instance we have already released. Never create a
             # peer keyed None -- that breaks sorting the peer table forever.
             self.log("in", "mission", str(instance_name), "reply from unmapped instance", "warn")
             return
-        status = enum_name(getattr(payload, "handshake_status", None))
-        mission_id = getattr(payload, "mission_id", "?")
+        status = enum_name(getattr(env, "handshake_status", None))
+        mission_id = getattr(env, "mission_id", "?")
         level = "warn" if status == "NACK" else "ok"
         self.peer(agent).ch["mission_in"].hit()
         self.log("in", "mission", agent, f"{status.lower()} · {mission_id}", level)
