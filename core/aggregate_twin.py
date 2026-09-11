@@ -173,8 +173,14 @@ class AggregateTwin(MessageDispatcher):
     def _handle_discovery(self, msg: DiscoveryMessage) -> None:
 
         agent_name = msg.agent_name
-        if not agent_name or self.fleet.instance_of(agent_name):
+        if not agent_name or self.fleet.instance_of(agent_name) :
             self.logger.debug("Ignoring discovery for agent=%s (already live)", agent_name)
+            return
+
+
+        pending_discovery = self._pending_discovery.get(agent_name)
+        if pending_discovery is not None:
+            self._request_instance(agent_name, pending_discovery)
             return
 
         initiator = self._instantiate_initiators.get(agent_name)
