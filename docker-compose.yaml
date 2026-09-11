@@ -15,5 +15,5 @@ services:
       - flexia_net
 
 networks:
-  flexia_net:
+  twin_net:
     external: true
