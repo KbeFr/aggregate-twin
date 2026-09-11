@@ -8,6 +8,8 @@ from core_msgs.topic_contract import (
 )
 from flexCommunicator.clientLibraries.flcpy.utils.constants import APPLICATION_STATUS
 
+from flexCommunicator.clientLibraries.flcpy.flexCloud.flexCloudVariable import flexCloudVariable
+
 EMPTY_COMM_MATRIX_PATH = "config/emptyCommMatrix.yaml"
 INSTANCE_SPECIFIC_CONFIG = "config/specific_topic_config.yaml"
 
@@ -49,7 +51,6 @@ class AggregateNetworkNode(flexNode):
                                        callback=twin.step, autostart=True)
 
         self.application_status.set(value=APPLICATION_STATUS.RUNNING)
-
 
     # --- inbound: decode, then queue. Runs on transport threads. -------------
 
