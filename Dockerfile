@@ -6,16 +6,17 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
     git \
+    openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
+RUN mkdir -p -m 0700 ~/.ssh && ssh-keyscan github.com >> ~/.ssh/known_hosts
 
 # flexComm
-RUN git clone -b TestBranch-HDT-Project https://KbeFr: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@github.com/BertVanAcker/flexCommunicator.git
+RUN --mount=type=ssh,id=custom git clone -b TestBranch-HDT-Project git@github.com:BertVanAcker/flexCommunicator.git /app/flexCommunicator
 RUN pip install --no-cache-dir -e /app/flexCommunicator
 
-
 # core_msgs
-RUN git clone https://KbeFr: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@github.com/KbeFr/core-msgs.git
+RUN --mount=type=ssh,id=custom git clone git@github.com:KbeFr/core-msgs.git /app/core-msgs
 RUN pip install --no-cache-dir -e /app/core-msgs
 
 # Install aggregate_twin requirements

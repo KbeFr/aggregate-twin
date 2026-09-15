@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      ssh:
+        - custom=${USERPROFILE}/.ssh/git_clone_no_pass
     container_name: aggregate_twin
     environment:
       MQTT_BROKER_HOST: mqtt-broker
@@ -13,6 +15,7 @@ services:
       - "8082:8082"
     networks:
       - twin_net
+
 
 networks:
   twin_net:
