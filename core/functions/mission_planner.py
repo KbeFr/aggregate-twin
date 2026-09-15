@@ -44,20 +44,19 @@ class MissionPlanner:
 
         self.mission_logger = mission_logger
 
-    def assign_and_plan(self, missions, ugv_list, k: int = 3):
-        free = [u for u in ugv_list if u.mission_id is None]     # telemetry knows
+    def assign_and_plan(self, pending_missions : list[Mission], available_agents : list[AgentEntry], k: int = 3):
         out = []
-        for m in (x for x in missions if x.mission_status is MissionStatus.PENDING):
+        for m in pending_missions:
             goal = self._resolve_goal(m)
             if goal is None:
                 continue
             weights = POSTURE_WEIGHTS[m.mission_posture]
             scored = []
-            for u in free:
-                res = self._plan(u, u.xy, goal, weights)          # PlanResult
+            for agent in available_agents:
+                res = self._plan(agent, agent.xy, goal, weights)          # PlanResult
                 if not res.feasible:
                     continue
-                scored.append((res.cost, u.name , res))
+                scored.append((res.cost, agent.name , res))
             scored.sort(key=lambda t: t[0])
             if scored:
                 out.append((m, {

@@ -72,8 +72,8 @@ def main() -> None:
         global_topic_dict=global_topic_dict,
         twin=twin,
         namespace=NAMESPACE,
-        node_name=TWIN_NAME,
         loop_freq=int(TICK_HZ),
+        gui_port=TWIN_GUI_PORT,
     )
 
     network_node.spin()

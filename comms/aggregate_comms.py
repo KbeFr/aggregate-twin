@@ -10,18 +10,20 @@ from flexCommunicator.clientLibraries.flcpy.utils.constants import APPLICATION_S
 
 from flexCommunicator.clientLibraries.flcpy.flexCloud.flexCloudVariable import flexCloudVariable
 
+from flexCommunicator.clientLibraries.flcpy.flexCloud.flexCloudConfiguration import flexCloudConfigParameter
+
 EMPTY_COMM_MATRIX_PATH = "config/emptyCommMatrix.yaml"
 INSTANCE_SPECIFIC_CONFIG = "config/specific_topic_config.yaml"
 
 class AggregateNetworkNode(flexNode):
     """FlexNode interface to aggregate twin """
     def __init__(self,
-                 flex_config,
-                 global_topic_dict,
+                 flex_config : dict,
+                 global_topic_dict : dict,
                  twin,
-                 namespace,
-                 node_name,
-                 loop_freq: int
+                 namespace : str,
+                 loop_freq: int,
+                 gui_port: int,
     ):
 
         super().__init__(
@@ -31,8 +33,6 @@ class AggregateNetworkNode(flexNode):
             verbose=True,
         )
         self.twin = twin
-        self.namespace = namespace
-        self.node_name = node_name
         self.decode_errors = 0
 
         self._instance_topic_dict = load_topic_config(INSTANCE_SPECIFIC_CONFIG)
@@ -40,7 +40,7 @@ class AggregateNetworkNode(flexNode):
 
         self._published = register_node_topics(
             node=self, topic_dict=global_topic_dict,
-            namespace=namespace, agent_id=node_name,
+            namespace=namespace, agent_id=twin.name,
             in_callbacks={
                 MessageType.DISCOVERY:   lambda p: self._ingest(MessageType.DISCOVERY, p),
                 MessageType.INSTANTIATE: lambda p: self._ingest(MessageType.INSTANTIATE, p),
@@ -51,6 +51,25 @@ class AggregateNetworkNode(flexNode):
                                        callback=twin.step, autostart=True)
 
         self.application_status.set(value=APPLICATION_STATUS.RUNNING)
+
+        self._gui_port = flexCloudVariable(name="GUI_PORT", initial_value=gui_port)
+        self._node_name = flexCloudVariable(name="NODE_NAME", initial_value=twin.name)
+        self._namespace = flexCloudVariable(name="NAMESPACE", initial_value=namespace)
+        self._pending_instances = flexCloudVariable(name="PENDING_INSTANCES", initial_value=0)
+        self._pending_agents = flexCloudVariable(name="PENDING_AGENTS", initial_value=0)
+        self._paired_nodes = flexCloudVariable(name="PAIRED_NODES", initial_value=0)
+
+
+        self.register_flexCloud_variable(self._gui_port)
+        self.register_flexCloud_variable(self._node_name)
+        self.register_flexCloud_variable(self._namespace)
+        self.register_flexCloud_variable(self._pending_instances)
+        self.register_flexCloud_variable(self.pending_agents)
+        self.register_flexCloud_variable(self._paired_nodes)
+
+        self.multiplier = flexCloudConfigParameter(name="multiplier",initial_value=1)
+        self.register_flexCloud_variable(self.multiplier)
+
 
     # --- inbound: decode, then queue. Runs on transport threads. -------------
 
@@ -92,3 +111,7 @@ class AggregateNetworkNode(flexNode):
         Can filter out unsibscribed topics when they arrive or send here tho.
         """
         self._instance_topics.pop(instance_name, None)
+
+    @property
+    def namespace(self):
+        return self._namespace.get()

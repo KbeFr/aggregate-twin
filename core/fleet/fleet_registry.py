@@ -83,8 +83,12 @@ class FleetRegistry:
         if kind is not None:
             agents = [a for a in agents if a.kind == kind]
         if not include_stale:
-            agents = [a for a in agents if a.age <= self.stale_after]
+            agents = [a for a in agents if not self.is_stale(a.name)]
         return agents
+
+    @property
+    def available_ugvs(self) -> list[AgentEntry]:
+        return [a for a in self._agents.values() if a.mission_id]
 
     @property
     def ugvs(self) -> list[AgentEntry]:
@@ -94,12 +98,12 @@ class FleetRegistry:
     def uavs(self) -> list[AgentEntry]:
         return self.all(kind=AgentKind.UAV)
 
-    def is_stale(self, agent_id: str) -> bool:
-        snap = self._agents.get(agent_id)
+    def is_stale(self, agent_name : str) -> bool:
+        snap = self._agents.get(agent_name)
         return snap is None or snap.age > self.stale_after
 
-    def kind_of(self, agent_id: str, default: AgentKind = AgentKind.UGV) -> AgentKind:
-        snap = self._agents.get(agent_id)
+    def kind_of(self, agent_name: str, default: AgentKind = AgentKind.UGV) -> AgentKind:
+        snap = self._agents.get(agent_name)
         return snap.kind if snap else default
 
     def agent_of(self, instance_name: str) -> str | None:
