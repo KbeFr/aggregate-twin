@@ -64,7 +64,7 @@ class AggregateNetworkNode(flexNode):
         self.register_flexCloud_variable(self._node_name)
         self.register_flexCloud_variable(self._namespace)
         self.register_flexCloud_variable(self._pending_instances)
-        self.register_flexCloud_variable(self.pending_agents)
+        self.register_flexCloud_variable(self._pending_agents)
         self.register_flexCloud_variable(self._paired_nodes)
 
         self.multiplier = flexCloudConfigParameter(name="multiplier",initial_value=1)
