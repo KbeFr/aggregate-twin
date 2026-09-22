@@ -55,24 +55,26 @@ def check_discovery(msg : AgentDiscoveryMessage, configs : dict, autocomplete : 
     if default_kind is not None:
         layers["kind"] = OmegaConf.create(default_kind)
     if autocomplete:
-        # lowest priority first, so later entries win the merge:
-        # kind default < type default < agent-specific < self-reported
-        ordered = [layers[k] for k in ("kind", "type", "agent", "reported") if k in layers]
-        disc = OmegaConf.merge(*ordered)
-        # can check the missing still, but will just log and not act on it for now
-        container = OmegaConf.to_container(disc, throw_on_missing=False)
-        missing = [k for k, v in container.items() if v == "???"]
-        if missing:
-            logger.warning(
-                "agent=%s: no config layer (or self-report) could fill %s, leaving as None",
-                msg.name, ", ".join(missing))
-            for k in missing:
-                container[k] = None
-        return AgentDiscoveryMessage(**container)
-    else:
-        # here the gui will first ask human intervention and validation of discovery
-        gui_dict = {msg.name: layers}
-        return gui_dict
+        return merge_layers(layers, msg.name)
+    # here the gui will first ask human intervention and validation of discovery
+    return {msg.name: layers}
+
+
+def merge_layers(layers: dict, agent_name: str) -> AgentDiscoveryMessage:
+    """Collapse the layers into one discovery, lowest priority first so later entries
+    win: kind default < type default < agent-specific < self-reported."""
+    ordered = [layers[k] for k in ("kind", "type", "agent", "reported") if k in layers]
+    disc = OmegaConf.merge(*ordered)
+    # can check the missing still, but will just log and not act on it for now
+    container = OmegaConf.to_container(disc, throw_on_missing=False)
+    missing = [k for k, v in container.items() if v == "???"]
+    if missing:
+        logger.warning(
+            "agent=%s: no config layer (or self-report) could fill %s, leaving as None",
+            agent_name, ", ".join(missing))
+        for k in missing:
+            container[k] = None
+    return AgentDiscoveryMessage(**container)
 
 def load_agent_configs( path : str | Path ) -> dict:
     agent_config = {}

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import queue
 import time
+from typing import Callable
 
 from aggregate_twin.core.discovery_config import check_discovery, load_agent_configs
 from aggregate_twin.core.comm_managers.link_manager import LinkingMode, LinkManager, LinkAction
@@ -60,6 +61,7 @@ class AggregateTwin(MessageDispatcher):
         self.instance_discovery = instance_discovery
 
         self.inbox: queue.Queue = queue.Queue()
+        self._commands: queue.SimpleQueue[Callable[[], None]] = queue.SimpleQueue()
 
         # --- shared world model ---
         self.world_config = WorldConfig.from_yaml(world)
@@ -103,11 +105,9 @@ class AggregateTwin(MessageDispatcher):
             timeout=self.bid_timeout, logger=logging.getLogger(f"{name}.links"),
         )
 
-        self.autocomplete = True #True -> use all configs possible to autocomplete the missing robot config
+        self.autocomplete = False #True -> use all configs possible to autocomplete the missing robot config
                                  #False -> ask the human first (with options from config or custom)
         self.agent_configs = load_agent_configs(AGENT_CONFIG_FILES_PATH)
-
-
 
         self.logger.debug("Init complete. namespace=%s resolution=%.3f loop_freq=%d mode=%s",
              self.namespace, effective_resolution, loop_freq,
@@ -148,6 +148,20 @@ class AggregateTwin(MessageDispatcher):
     # ------------------------------------------------------------------
     # Operator / GUI surface
     # ------------------------------------------------------------------
+
+    def submit_command(self, command: Callable[[], None]) -> None:
+        """Run `command` on the step thread. Operator writes arrive on other threads,
+        and everything they touch is otherwise only written by step()."""
+        self._commands.put(command)
+
+    def set_linking_mode(self, mode: LinkingMode) -> LinkingMode:
+        mode = self.link_manager.set_linking_mode(mode)
+        self._flush()
+        return mode
+
+    def gui_reject_discovery(self, agent_name: str) -> None:
+        self.link_manager.gui_reject_agent(agent_name)
+        self._flush()
 
     def gui_trigger_discovery(self, discovery_msg: AgentDiscoveryMessage) -> None:
         self.link_manager.gui_confirm_agent(discovery_msg)
@@ -268,6 +282,7 @@ class AggregateTwin(MessageDispatcher):
     def _step(self) -> None:
         self._sim_step += 1
         self._drain_inbox()
+        self._run_commands()
 
         if self._sim_step % self.perception_period == 0:
             self.obstacles.prune(self._sim_step)
@@ -303,6 +318,17 @@ class AggregateTwin(MessageDispatcher):
                 self.logger.exception("handler for %s failed", topic)
             self._flush()
 
+    def _run_commands(self, budget: int = 64) -> None:
+        for _ in range(budget):
+            try:
+                command = self._commands.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                command()
+            except Exception:
+                self.logger.exception("operator command failed")
+
     def now(self) -> float:
         return self._sim_step * self.dt
 
@@ -328,6 +354,10 @@ class AggregateTwin(MessageDispatcher):
     # ------------------------------------------------------------------
     # Views (delegating: the managers own the state)
     # ------------------------------------------------------------------
+
+    @property
+    def linking_mode(self) -> LinkingMode:
+        return self.link_manager.linking_mode
 
     @property
     def unlinked_agents(self):

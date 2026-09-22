@@ -8,7 +8,6 @@ asked, and the liveness that ends a pairing.
 from __future__ import annotations
 
 import logging
-from argparse import Action
 from enum import Enum
 from typing import Callable
 
@@ -66,11 +65,7 @@ class LinkManager(HandshakeCoordinator):
         self.unlinked_instances = UnlinkedRegistry(clock=clock)
 
         self.instance_discovery = instance_discovery
-        self.linking_mode = linking_mode
-        if not instance_discovery and linking_mode is not LinkingMode.POOLED:
-            self.logger.warning("linking_mode=%s needs instance discovery, using POOLED",
-                                linking_mode.value)
-            self.linking_mode = LinkingMode.POOLED
+        self.linking_mode = self._supported(linking_mode)
 
         self.instance_choice: dict[str, str] = {}   # agent -> instance, from the GUI
         self.discoveries_gui: dict = {}             # discoveries the operator must complete
@@ -136,6 +131,33 @@ class LinkManager(HandshakeCoordinator):
         self.instance_choice[agent_name] = instance_name
         self.link()
 
+    def gui_reject_agent(self, agent_name: str) -> None:
+        """The operator refused an incomplete discovery: same exit as an eviction."""
+        self.discoveries_gui.pop(agent_name, None)
+        if agent_name in self.unlinked_agents and self.unlinked_agents.get(agent_name) is None:
+            self.unlinked_agents.remove(agent_name)
+            self.action_callback(LinkAction.UNSUB_AGENT, agent_name)
+        self.forget(agent_name)
+
+    def mode_available(self, mode: LinkingMode) -> bool:
+        """Every mode but POOLED picks from the instance pool, which only fills up
+        when instances announce themselves."""
+        return self.instance_discovery or mode is LinkingMode.POOLED
+
+    def set_linking_mode(self, mode: LinkingMode) -> LinkingMode:
+        mode = self._supported(mode)
+        if mode is not LinkingMode.GUI:
+            self.instance_choice.clear()        # a pick only means something in GUI mode
+        self.linking_mode = mode
+        self.link()
+        return mode
+
+    def _supported(self, mode: LinkingMode) -> LinkingMode:
+        if self.mode_available(mode):
+            return mode
+        self.logger.warning("linking_mode=%s needs instance discovery, using POOLED", mode.value)
+        return LinkingMode.POOLED
+
     def _already_handled(self, agent_name: str) -> bool:
         if self.fleet.instance_of(agent_name):
             self.logger.debug("agent=%s ignored (already linked)", agent_name)
@@ -152,7 +174,6 @@ class LinkManager(HandshakeCoordinator):
     def link(self) -> None:
         """Give every waiting agent an instance. Cheap to call on every discovery and
         every step: an agent already in flight is skipped."""
-
         for agent_name, discovery in list(self.unlinked_agents):
             if discovery is None or self.in_flight(agent_name):
                 continue                        # waiting on the GUI, or in flight
@@ -212,11 +233,6 @@ class LinkManager(HandshakeCoordinator):
             self.logger.error("No discovery message found for agent %s.", agent_name)
             return
 
-        if instance_name in self.unlinked_instances:
-            self.unlinked_instances.remove(instance_name) # already subbed at discovery
-        else:
-            self.action_callback(LinkAction.SUB_INSTANCE, instance_name) # not subbed yet -> pooled
-
         self.unlinked_instances.remove(instance_name)
         self.fleet.register(agent_name, instance_name, discovery)
         self.logger.info("Confirmed: agent=%s kind=%s instance=%s",
@@ -233,7 +249,7 @@ class LinkManager(HandshakeCoordinator):
                        and agent_name not in self.fleet.stale_agents(self.agent_timeout))
 
         self.fleet.remove(agent_name)
-        # self.on_pair_lost(agent_name)
+        self.action_callback(LinkAction.DROP_AGENT, agent_name)
 
         if instance_name:
             self.action_callback(LinkAction.UNSUB_INSTANCE, instance_name)
