@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aggregate_twin"
+version = "0.1.0"
+dependencies = [
+    'paho-mqtt>=1.6.1',
+    'websockets>=12.0',
+    'shapely>=2.1.2',
+    'matplotlib',
+    'numpy',
+    'PyYAML',
+    'scipy',
+    'omegaconf',
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["aggregate_twin*"]
+
+[project.scripts]
+aggregate-twin = "aggregate_twin.main:main"

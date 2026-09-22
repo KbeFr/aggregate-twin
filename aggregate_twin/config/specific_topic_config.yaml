@@ -1,0 +1,5 @@
+- {name: mission, dir: inout}
+- {name: obstacle, dir: in}
+- {name: twin_state, dir: in}
+- {name: activate, dir: inout }
+- {name: heartbeat, dir : in }

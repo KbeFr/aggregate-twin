@@ -1,0 +1,6 @@
+height: 40 # the height of the world
+width: 40   # the width of the world
+origin_x: 0.0
+origin_y: 0.0
+resolution: 0.4
+static_obstacles: []
