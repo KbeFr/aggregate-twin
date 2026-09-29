@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir -e /app/flexCommunicator
 COPY aggregate-twin/ /app/aggregate-twin
 RUN pip install --no-cache-dir -e /app/aggregate-twin
 
-WORKDIR /app/aggregate_twin
+WORKDIR /app/aggregate-twin
 
 ENV TWIN_TICK_HZ=10 \
     TWIN_NAMESPACE=default_ns \
