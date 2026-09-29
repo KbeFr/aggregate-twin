@@ -85,8 +85,8 @@ class Net:
                     if name not in self.resp:
                         continue
                     r = self.resp[name].handle(env)
-                    if r.action is not A.DO_NOTHING:
-                        self.actions.append((name, r.action, r.subject))
+                    if r.outbound is not A.DO_NOTHING:
+                        self.actions.append((name, r.outbound, r.subject))
                     self.from_instance(r.reply)
             else:
                 self.agg.route(env)

@@ -34,15 +34,13 @@ from core_msgs.utils.utils import load_config, format_nested_strings
 TICK_HZ = float(os.environ.get("TWIN_TICK_HZ", "10"))
 MQTT_BROKER_HOST = os.environ.get("MQTT_BROKER_HOST", "localhost")
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
-NAMESPACE = os.environ.get("TWIN_NAMESPACE", "default_ns")
+NAMESPACE = os.environ.get("TWIN_NAMESPACE", "default-ns")
 TWIN_NAME = os.environ.get("TWIN_NAME", "aggregate_twin")
 PERCEPTION_SOURCE = os.environ.get("PERCEPTION_SOURCE", "static")  # static | sim | aruco | merged
 WORLD_CONFIG_FILE_NAME = os.environ.get("WORLD_CONFIG_FILE_NAME", "empty_world.yaml")
 TWIN_GUI_PORT = os.environ.get("TWIN_GUI_PORT", "8082")
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_AGENT_CONFIG_PATH = files("aggregate_twin").joinpath("config", "default_agent_config.yaml")
 
 
 def main() -> None:
