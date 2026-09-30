@@ -262,7 +262,20 @@ class AggregateTwin(MessageDispatcher):
         if not agent_name:
             self.logger.warning("Obstacles received from unmapped instance %s", instance_name)
             return
+
+        agent_obs = self.fleet.agent_name_of(int(msg.id))
+        if agent_obs:
+            # the object is an agent -> send the position to instance
+            self.send_agent_position(agent_obs, msg)
+            return
+
         self.obstacles.ingest(agent_name, msg, self._sim_step)
+
+
+    def send_agent_position(self, agent_name:str , msg : ObstacleObservation) -> None:
+        position = PositionMessage(x=msg.x, y=msg.y,theta=msg.theta)
+        self.transport.publish_to_node(self.fleet.instance_of(agent_name),
+                                       MessageType.POSE, position)
 
     @handles(MessageType.HEARTBEAT)
     def _handle_heartbeat(self, sender: str , msg: HeartBeatMessage) -> None:

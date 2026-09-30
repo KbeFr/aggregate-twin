@@ -242,22 +242,27 @@ class LinkManager(HandshakeCoordinator):
         discovery = self.fleet.discovery_of(agent_name)
         instance_name = instance_name or self.fleet.instance_of(agent_name)
 
-        # Ask BEFORE the entry goes away: if the agent is the half that died, putting
-        # it back in the pool would just re-link it to the next instance and lose that
-        # one too. If the twin died instead, the agent is fine and should be re-linked.
         agent_alive = (discovery is not None
                        and agent_name not in self.fleet.stale_agents(self.agent_timeout))
 
+        instance_alive = instance_name not in self.fleet.stale_instances(self.instance_timeout)
+
+        # remove pair from fleet
         self.fleet.remove(agent_name)
+        # cancel active mission if any
         self.action_callback(LinkAction.DROP_AGENT, agent_name)
 
-        if instance_name:
+        if instance_alive:                          #TODO link back to actual instanceDiscovery
+            self.unlinked_instances.register(instance_name, InstanceDiscoveryMessage(instance_name))
+        else:
+            self.unlinked_instances.remove(instance_name)
             self.action_callback(LinkAction.UNSUB_INSTANCE, instance_name)
 
         if agent_alive:
             self.unlinked_agents.register(agent_name, discovery)
         else:
             self.unlinked_agents.remove(agent_name)
+            self.action_callback(LinkAction.UNSUB_AGENT, agent_name)
             self.logger.info("agent=%s not re-pooled: no recent heartbeat", agent_name)
 
         self.logger.info("Released agent=%s from instance=%s", agent_name, instance_name)
@@ -298,10 +303,10 @@ class LinkManager(HandshakeCoordinator):
 
         for agent_name in self.fleet.stale_instances(self.instance_timeout):
             self.cooldown_check.add(agent_name)
-            self._release_pair(agent_name, "no twin state")
+            self._abandon_receiver(agent_name, "no twin state")
 
         for agent_name in self.fleet.stale_agents(self.agent_timeout):
-            self._release_pair(agent_name, "no agent heartbeat")
+            self._abandon_agent(agent_name, "no agent heartbeat")
 
     def _release_pair(self, agent_name: str, reason: str) -> None:
         if not self.in_flight(agent_name) or self.releasing(agent_name):
@@ -314,7 +319,7 @@ class LinkManager(HandshakeCoordinator):
 
         if self.in_flight(agent_name):
             self.cancel(agent_name, reason)
-        # TODO what if agent comes back after some time, it only knows heartbeat
+        # TODO what if agent comes back after some time, it only knows heartbeat and what if loop?? (no instance)
         self.forget(agent_name)
 
     def _abandon_receiver(self, instance_name: str, reason: str) -> None:
@@ -324,6 +329,8 @@ class LinkManager(HandshakeCoordinator):
         for agent_name in self.subjects_on(instance_name):
             self.cancel(agent_name, reason)
         # TODO what if instance comes back after some time, it only knows heartbeat
+
+
 
 
     # ------------------------------------------------------------------

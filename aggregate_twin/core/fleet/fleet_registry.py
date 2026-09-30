@@ -39,6 +39,9 @@ class FleetRegistry:
         # Bidirectional routing maps
         self._agent_to_instance: dict[str, str] = {}
         self._instance_to_agent: dict[str, str] = {}
+
+        self.agent_id_to_name: dict[int, str] = {} # not good but yea
+
         # Liveness, by source
         self._agent_seen: dict[str, float] = {}       # agent name -> last heartbeat
         self._instance_seen: dict[str, float] = {}    # instance name -> last twin state
@@ -66,7 +69,7 @@ class FleetRegistry:
         self._agent_seen[agent_name] = self.clock()
         return True
 
-    def register(self, agent_name: str, instance_name, discovery :AgentDiscoveryMessage) -> None:
+    def register(self, agent_name: str, instance_name, discovery : AgentDiscoveryMessage) -> None:
 
         if not discovery.kind:
             logger.error("No AgentKind in discovery payload, cannot register %s.", agent_name)
@@ -81,8 +84,9 @@ class FleetRegistry:
         if entry is None:
 
             entry = AgentEntry(name=agent_name, kind=discovery.kind, instance_name=instance_name,
-                               radius=radius )
+                               radius=radius, id=discovery.agent_id, type=discovery.agent_type )
             self._agents[agent_name] = entry
+            self.agent_id_to_name[entry.id] = agent_name
 
         else:
             if entry.instance_name != instance_name:
@@ -106,6 +110,7 @@ class FleetRegistry:
 
     def remove(self, agent_name : str) -> None:
         result = self._agents.pop(agent_name, None)
+        self.agent_id_to_name.pop(result.id)
         instance = self._agent_to_instance.pop(agent_name, None)
         self._instance_to_agent.pop(instance, None)
         self._agent_seen.pop(agent_name, None)
@@ -162,6 +167,9 @@ class FleetRegistry:
         """Kept so a released agent can go straight back into the unlinked pool
         without waiting for it to announce itself again."""
         return self._discovery.get(agent_name)
+
+    def agent_name_of(self, agent_id : int) -> str | None:
+        return self.agent_id_to_name.get(agent_id)
 
     def instances(self) -> list[str]:
         return list(self._instance_to_agent)

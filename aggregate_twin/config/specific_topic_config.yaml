@@ -3,3 +3,4 @@
 - {name: twin_state, dir: in}
 - {name: activate, dir: inout }
 - {name: heartbeat, dir : in }
+- {name: pose, dir : out}
