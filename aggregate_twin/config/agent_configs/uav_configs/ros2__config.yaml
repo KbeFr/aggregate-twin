@@ -20,6 +20,6 @@ perception_sensors:
       orientation: {x: 0.7071, y: -0.7071, z: 0.0, w: 0.0}
 
 interface:
-  name: ros
+  name: ros2
   ros_distro: humble
   # ros_types: {action: geometry_msgs/msg/TwistStamped}   # if the driver expects stamped commands

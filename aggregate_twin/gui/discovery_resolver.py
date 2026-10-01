@@ -155,11 +155,17 @@ def source_labels(agent_name: str, layers: dict) -> dict[str, dict[str, str]]:
 
 # ---------------------------------------------------------------- internals
 def _candidates(layers: dict, name: str):
+    found_values = []
     for source in PRECEDENCE:
         found, value = _lookup(layers.get(source), name)
         if found:
-            yield Candidate(source, value)
-
+            found_values.append((source, value))
+    for i, (source, value) in enumerate(found_values):
+        if isinstance(value, dict):
+            below = [v for _, v in found_values[i + 1:] if isinstance(v, dict)]
+            if below:
+                value = OmegaConf.to_container(OmegaConf.merge(*reversed(below), value))
+        yield Candidate(source, value)
 
 def _answer(spec: FieldSpec, choice: dict) -> tuple[Any, str | None]:
     source = choice.get("source") or spec.default_source
