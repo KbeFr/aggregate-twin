@@ -270,7 +270,7 @@ class AggregateTwin(MessageDispatcher):
             self.send_agent_position(target, msg, observer=agent_name)
             return
 
-        self.obstacles.ingest(agent_name, msg, self._sim_step)
+        self.obstacles.ingest(agent_name, msg, time.time())
 
 
     def send_agent_position(self, agent_name: str, obs: ObstacleObservation, observer: str) -> None:
@@ -308,7 +308,7 @@ class AggregateTwin(MessageDispatcher):
         self._run_commands()
 
         if self._sim_step % self.perception_period == 0:
-            self.obstacles.prune(self._sim_step)
+            self.obstacles.prune(time.time())
             self.grid_map.update_perception(self.obstacles.observations())
 
         if self._sim_step % self.plan_period == 0 or self._sim_step == 1:

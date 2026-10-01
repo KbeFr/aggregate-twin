@@ -36,7 +36,7 @@ function queueItem(entry) {
       <button class="queue-item${complete ? ' complete' : ''}" type="button" data-id="${entry.id}"
               aria-current="${entry.id === state.activeId ? 'true' : 'false'}">
         <span class="queue-name">${entry.id}</span>
-        <span class="queue-meta">${[entry.kind, entry.agent_type].filter(Boolean).join(', ') || 'unknown kind'}</span>
+        <span class="queue-meta">${[entry.id, entry.kind, entry.agent_type].filter(Boolean).join(', ') || 'unknown kind'}</span>
         <span class="queue-need">${need}</span>
         ${progress ? html`<span class="queue-bar"><i style="width:${Math.round((progress[0] / Math.max(progress[1], 1)) * 100)}%"></i></span>` : ''}
       </button>

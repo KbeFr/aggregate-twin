@@ -6,9 +6,9 @@ from core_msgs.instance_aggregate.payloads import ObstacleObservation
 
 @dataclass
 class ObstacleReport:
-    obs: "ObstacleObservation"
+    obs: ObstacleObservation
     reporter: str          # agent name that saw it
-    received: float        # sim time
+    received: float        # time
 
     @property
     def footprint(self) -> float:
@@ -22,7 +22,7 @@ class ObstacleReport:
 class ObstacleRegistry:
     """Every obstacle report, kept per reporting agent."""
 
-    def __init__(self, max_age: float = 2.0) -> None:
+    def __init__(self, max_age: float = 5.0) -> None:
         self.max_age = max_age
         self._reports: dict[str, dict[str, ObstacleReport]] = {}   # reporter -> id -> report
 
@@ -34,6 +34,7 @@ class ObstacleRegistry:
         for reporter, per_id in self._reports.items():
             for oid in [k for k, r in per_id.items()
                         if r.obs.is_dynamic and now - r.received > self.max_age]:
+                print("PRUNED")
                 per_id.pop(oid)
 
     def drop_reporter(self, reporter: str) -> None:

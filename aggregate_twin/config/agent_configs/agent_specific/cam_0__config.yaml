@@ -12,7 +12,7 @@ estimator:
 
 perception_sensors:
   - name: aruco
-    radius: 0.2                       # obstacle size given to markers that are not agents
+    radius: 0.08                       # obstacle size given to markers that are not agents
     std_floor: 0.01                   # error model, fit from the static validation grid
     k_xy: 0.002
     offset:
