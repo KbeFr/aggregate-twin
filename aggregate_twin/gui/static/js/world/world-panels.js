@@ -12,7 +12,17 @@ function fleetRow(a, state) {
       <div class="sub"><span>${num(a.x)}, ${num(a.y)}</span><span class="${low ? 'error' : ''}">${pct(a.battery)}</span></div>
       <div class="sub"><span>${a.instance || 'no instance'}</span>
         <span>${a.arrived ? 'arrived' : (a.mission_id || 'idle')}</span></div>
+      ${fovLine(a, state)}
     </div>`;
+}
+
+function fovLine(a, state) {
+  const hull = a.sensor_footprint || [];
+  if (hull.length < 2) return html`<div class="sub"><span class="muted">no sensor reach seen yet</span></div>`;
+  const shown = !state.fovHidden.has(a.name);
+  return html`
+    <div class="sub"><span>sensor fov, ${hull.length} pts</span>
+      <button class="ghost" type="button" data-fov="${a.name}" aria-pressed="${String(shown)}">${shown ? 'Hide fov' : 'Show fov'}</button></div>`;
 }
 
 function missionRow(m, state) {
@@ -44,6 +54,12 @@ function obstacleRow(o) {
 
 export function createWorldPanels(state, { onSelect, onCancel }) {
   $('fleetBox').addEventListener('click', event => {
+    const fov = event.target.closest('[data-fov]');
+    if (fov) {
+      const name = fov.dataset.fov;
+      if (state.fovHidden.has(name)) state.fovHidden.delete(name); else state.fovHidden.add(name);
+      return onSelect();
+    }
     const row = event.target.closest('[data-agent]');
     if (!row) return;
     state.agent = state.agent === row.dataset.agent ? null : row.dataset.agent;
