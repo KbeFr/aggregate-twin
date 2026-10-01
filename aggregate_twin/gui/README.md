@@ -209,7 +209,7 @@ Converters shared by the views:
 Turns the config layers that `check_discovery()` stored into a form, and the operator's answers back into `AgentDiscoveryMessage` fields.
 
 - **Layers,** highest priority first: `reported` (what the agent said), `agent` (config for this agent by name), `type` (default for its agent type), `kind` (default for UGV or UAV).
-- **Identity fields** (`name`, `kind`, `agent_type`, `namespace`, `timestamp`) are never asked. They are always copied from the report.
+- **Identity fields** (`name`, `kind`, `interface_name`, `namespace`, `timestamp`) are never asked. They are always copied from the report.
 - **Every other dataclass field becomes one question,** including fields that no layer can fill; those must be written by hand.
 - **Value type** comes from the dataclass annotation when it names one kind of value (`Optional[float]` → `number`), otherwise from the first candidate's value, otherwise `json`.
 - **Only custom answers carry a value from the browser.** For every other answer the server looks the value up again in the layers, so a client cannot submit a value it was not offered.
