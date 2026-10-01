@@ -21,6 +21,7 @@ from core_msgs.global_msgs.global_payloads import (
 )
 from core_msgs.instance_aggregate.mission import Mission, MissionStatus
 from core_msgs.instance_aggregate.payloads import ObstacleObservation, TwinStatePayload
+from core_msgs.instance_agent.sensor_payloads import PoseMessage
 from core_msgs.topic_contract import MessageType
 from core_msgs.utils.dispatch import handles, MessageDispatcher
 
@@ -263,19 +264,28 @@ class AggregateTwin(MessageDispatcher):
             self.logger.warning("Obstacles received from unmapped instance %s", instance_name)
             return
 
-        agent_obs = self.fleet.agent_name_of(int(msg.id))
-        if agent_obs:
-            # the object is an agent -> send the position to instance
-            self.send_agent_position(agent_obs, msg)
+        # A marker on another agent is not an obstacle but a position fix for that agent
+        target = self.fleet.agent_name_of(msg.marker_id) if msg.marker_id is not None else None
+        if target and target != agent_name:
+            self.send_agent_position(target, msg, observer=agent_name)
             return
 
         self.obstacles.ingest(agent_name, msg, self._sim_step)
 
 
-    def send_agent_position(self, agent_name:str , msg : ObstacleObservation) -> None:
-        position = PositionMessage(x=msg.x, y=msg.y,theta=msg.theta)
-        self.transport.publish_to_node(self.fleet.instance_of(agent_name),
-                                       MessageType.POSE, position)
+    def send_agent_position(self, agent_name: str, obs: ObstacleObservation, observer: str) -> None:
+        """Relay a detection of `agent_name` to its instance as an external pose fix.
+        Only what was measured is sent, with the observer's own uncertainty."""
+        instance_name = self.fleet.instance_of(agent_name)
+        if instance_name is None:
+            return
+        std = {"x": obs.std_xy, "y": obs.std_xy, "theta": obs.std_theta}
+        self.transport.publish_to_node(
+            instance_name, MessageType.EXTERNAL_POSE,
+            PoseMessage(x=obs.x, y=obs.y, theta=obs.theta, frame_id="world", observer=observer,
+                        std={k: v for k, v in std.items() if v is not None},
+                        timestamp=obs.timestamp),
+        )
 
     @handles(MessageType.HEARTBEAT)
     def _handle_heartbeat(self, sender: str , msg: HeartBeatMessage) -> None:
