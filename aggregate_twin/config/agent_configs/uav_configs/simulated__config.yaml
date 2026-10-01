@@ -1,0 +1,28 @@
+#Type layer, IR-SIM "UAV" (agent_type: simulated)
+
+# An omni sim robot with a downward aruco camera
+
+kinematics: {name: omni, vel_max: [1.0, 1.0], vel_min: [-1.0, -1.0]}
+avg_speed: 0.8
+max_speed: 1.0
+
+state_sensors:
+  - name: pose                     # pose only, for omni robots the sim puts [vx, vy]
+    noise: {x: 0.02, y: 0.02, theta: 0.02}   # into linear/angular_velocity
+
+estimator: {name: ekf, gate: null}
+
+interface : {name: simulated}
+
+
+# need to match the config in sim
+perception_sensors:
+      - name: 'aruco'
+        offset:
+          position: {x: 0, y: 0, z: 2.4}
+          orientation: {x: 0.7071, y: -0.7071, z: 0, w: 0}
+
+      - name: 'sim2d_object'
+        offset:
+          position: {x: 0, y: 0, z: 2.4}
+          orientation: {x: 0.7071, y: -0.7071, z: 0, w: 0}

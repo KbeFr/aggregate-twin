@@ -1,0 +1,36 @@
+# Type layer , agent_type: simulated
+# Adds what simulation doesnt specify
+
+kinematics: {name: diff, vel_max: [1.0, 1.0], vel_min: [-1.0, -1.0]}
+mass: 1.0
+friction: 0.25
+avg_speed: 0.8
+max_speed: 1.0
+
+
+battery: {name: two_friction, init: 100.0, capacity: 71928.0, anc_drain: 5.0}
+
+estimator: {name: ekf, gate: null}   # ground truth needs no outlier gate
+
+interface : {name: simulated}
+
+state_sensors:
+  - name: pose                     # IR-SIM ground truth, anchors the EKF
+    noise: {x: 0.02, y: 0.02, theta: 0.02}
+  - name: wheel_odom
+    track_width: 0.2               # must match track_width in the world file
+    noise: {vx: 0.05, wz: 0.1}
+  - name: imu
+    noise: {wz: 0.05}
+
+# need to match the config in sim
+perception_sensors:
+      - name: 'aruco'
+        offset:
+          position: {x: 0, y: 0, z: 0}
+          orientation: {x: 0, y: 0, z: 0, w: 0}
+
+      - name: 'sim2d_object'
+        offset:
+          position: {x: 0, y: 0, z: 0}
+          orientation: {x: 0, y: 0, z: 0, w: 0}

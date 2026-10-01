@@ -1,50 +1,39 @@
+# kind layer, any UGV
 
-# This is the default robot config for if to little info is given in discovery
+kind: ugv
 
+kinematics:
+  name: diff
+  vel_max: [0.3, 1.0]              # [v m/s, w rad/s]; the code default is [1, 1]
+  vel_min: [-0.3, -1.0]
+shape: {name: circle, radius: 0.2}
+radius: 0.2                        # bounding radius used by the aggregate grid
 
-kind : ugv
-
-mass : 1.0                #kg
-avg_speed : 1             #m/s
-max_speed : 1.5           #m/s
-friction : 0.25
+mass: 3.0                          # kg
+friction: 0.25                     # used by the battery model
+avg_speed: 0.2                     # m/s, used for mission time bids
+max_speed: 0.3                     # m/s
 
 battery:
-  name: 'two_friction'
-  init : 100.0            #%
-  anc_drain : 5.0
-  scale : 1
-  capacity : 71928.0      #J
+  name: two_friction               # 2·µ·m·g J/m travelled + ancillary W
+  init: 100.0                      # %
+  capacity: 72000.0                # J (20 Wh)
+  anc_drain: 5.0                   # W, onboard electronics
+  scale: 1.0
 
-kinematics: {name: 'diff'}
+controller:
+  name: c3bf
+  robot_type: diff
+  safety_margin: 0.1               # m
+  goal_gain: 0.8
+  lookahead: 0.25
 
-shape: {name: 'circle',
-        radius: 0.2}
+estimator:
+  name: ekf
+  response_time: 0.2               # s, lag from command to actual velocity
+  state_noise: 0.01
+  velocity_noise: 0.3
+  gate: null                       # χ² gate off by default
 
-controller: {name: 'c3bf' ,
-             robot_type: 'diff',
-             safety_margin: 0.05,
-             goal_gain: 0.8
-}
-
-perception_sensors:  # -> DiscoveryMessage.perception_sensors
-  #    - name: 'aruco'
-  #      offset_pose: [0.0, 0.0, 0.0] #x ,y ,z
-  #      offset_angle: [0.0,0.0,0.0] #roll, pitch , jaw
-  #      shape_config:
-  #        name: 'rectangle'
-  #        length: 4.0
-  #        width: 3.0
-      - name: 'sim2d_object'
-        offset_pose: [0.0, 0.0, 0.0] #x ,y ,z
-        offset_angle: [0.0,0.0,0.0] #roll, pitch , jaw
-        shape_config:
-          name: 'wedge'
-          max_range: 4.0
-          fov_angle: 1.57
-
-
-
-topics: {action: out, imu : in , wheel_odom: in , pose : in , detections: in } # reverse from agent, for instance
-
-
+topics: {action: out}              # sensors add their own channels
+perception_sensors: []

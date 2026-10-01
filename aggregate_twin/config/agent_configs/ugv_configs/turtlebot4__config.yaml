@@ -1,51 +1,55 @@
+# Type layer, TurtleBot 4, ROS 2 Humble (agent_type: turtlebot4)
 
-# This is the default robot config for if to little info is given in discovery
 
-agent_type : 'turtlebot3' #for config reason
-
-kind : ugv
-
-mass : 1.0                #kg
-avg_speed : 1             #m/s
-max_speed : 1.5           #m/s
-friction : 0.25
+shape: {name: circle, radius: 0.172}     # Create 3 base, Ø = 342 mm
+radius: 0.172
+kinematics:
+  name: diff
+  vel_max: [0.3, 1.0]                    # safe-mode top speed = 0.31 m/s
+  vel_min: [-0.3, -1.0]
+mass: 3.9                                # standard model, the lite is = 3.3 kg
+friction: 0.25
+avg_speed: 0.2
+max_speed: 0.3
 
 battery:
-  name: 'two_friction'
-  init : 100.0            #%
-  anc_drain : 5.0
-  scale : 1
-  capacity : 71928.0      #J
+  name: two_friction
+  init: 100.0                            # overwritten by BatteryState readings
+  capacity: 93600.0                      # J, 26 Wh pack
+  anc_drain: 9.0                         # W for Pi + camera + lidar, tune from a logged discharge
+  scale: 1.0
 
-kinematics: {name: 'diff'}
+state_sensors:
+  # the external position reported by aggregate
+  - name: external_pose
+    topic: external_pose
+    noise: {x: 0.02, y: 0.02, theta: 0.03}
 
-shape: {name: 'circle',
-        radius: 0.2}
+  - name: odom
+    noise: {vx: 0.02, wz: 0.05}
 
-controller: {name: 'c3bf' ,
-             robot_type: 'diff',
-             safety_margin: 0.05,
-             goal_gain: 0.8
-}
-
-perception_sensors:  # -> DiscoveryMessage.perception_sensors
-  #    - name: 'aruco'
-  #      offset_pose: [0.0, 0.0, 0.0] #x ,y ,z
-  #      offset_angle: [0.0,0.0,0.0] #roll, pitch , jaw
-  #      shape_config:
-  #        name: 'rectangle'
-  #        length: 4.0
-  #        width: 3.0
-      - name: 'sim2d_object'
-        offset_pose: [0.0, 0.0, 0.0] #x ,y ,z
-        offset_angle: [0.0,0.0,0.0] #roll, pitch , jaw
-        shape_config:
-          name: 'wedge'
-          max_range: 4.0
-          fov_angle: 1.57
+estimator: {name: ekf, gate: 16.3}   # no initial_pose, it waits for the first camera fix
 
 
+perception_sensors:
+  # lidar can be used but not tested yet
+  - name: lidar
+    radius: 0.1
+    cell: 0.3
+    offset:
+      position: {x: 0.0, y: 0.0, z: 0.2}
+      orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}
 
-topics: {action: out, imu : in , wheel_odom: in , pose : in , detections: in } # reverse from agent, for instance
 
+controller: {name: c3bf, robot_type: diff, safety_margin: 0.1, goal_gain: 0.6}
 
+interface:
+  name: turtlebot4
+  ros_distro: humble
+
+  # for if you want to change ros type mapping, cause of specialize interface not necessary ofc
+  ros_types:
+    odom: nav_msgs/msg/Odometry
+  # params for specific translations
+  params:
+    lidar: {max_range: 3.0, cluster_gap: 0.15, min_points: 3}

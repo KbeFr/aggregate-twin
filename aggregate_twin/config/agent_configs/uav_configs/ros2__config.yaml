@@ -1,0 +1,25 @@
+# Type layer , real quadrotor on ROS 2 (agent_type: ros2)
+# Any drone whose driver publishes odometry, BatteryState and takes cmd_vel, with ros2_aruco on a downward camera.
+
+shape: {name: circle, radius: 0.12}
+radius: 0.12
+avg_speed: 0.25
+max_speed: 0.4
+
+state_sensors:
+  - name: pose                     # drone odometry used as world pose, placed by the
+    topic: odom                    # odom `origin` in the agent layer (drifts)
+    noise: {x: 0.15, y: 0.15, theta: 0.05}
+
+perception_sensors:
+  - name: aruco                    # ros2_aruco gives poses in the camera OPTICAL frame
+    radius: 0.2                    # obstacle size given to markers that aren't agents (default 0.8)
+    offset:
+      # looking down camera
+      position: {x: 0.0, y: 0.0, z: -0.02}
+      orientation: {x: 0.7071, y: -0.7071, z: 0.0, w: 0.0}
+
+interface:
+  name: ros
+  ros_distro: humble
+  # ros_types: {action: geometry_msgs/msg/TwistStamped}   # if the driver expects stamped commands

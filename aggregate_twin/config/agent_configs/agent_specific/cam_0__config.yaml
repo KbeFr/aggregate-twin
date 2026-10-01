@@ -1,0 +1,23 @@
+# static camera to imitate uav detection of arucodes
+
+state_sensors: []
+
+estimator:
+  - name: ekf
+    initial_pose: [2.0, 1.5, 0.0]
+    initial_std: 0.01
+    state_noise: 0.0
+
+perception_sensors:
+  - name: aruco
+    radius: 0.2
+    std_floor: 0.01
+    k_xy: 0.002
+    offset:
+      position: {x: 0, y: 0, z: 2.4}
+      orientation: {x: 0.7071, y: -0.7071, z: 0, w: 0}
+
+interface:
+  - name: ros
+    distro: humble
+    ros_types: {aruco_detections : ros2_aruco_interfaces/msg/ArucoMarkers}

@@ -1,50 +1,38 @@
+# Kind layer, any UAV
+# Modelled as a planar omni agent
 
-# This is the default robot config for if to little info is given in discovery
+kind: uav
 
+kinematics:
+  name: omni
+  vel_max: [0.5, 0.5]              # [vx, vy] m/s, world frame
+  vel_min: [-0.5, -0.5]
+shape: {name: circle, radius: 0.15}
+radius: 0.15
 
-kind : ugv
-
-mass : 1.0                #kg
-avg_speed : 1             #m/s
-max_speed : 1.5           #m/s
-friction : 0.25
+mass: 0.08                         # kg, Tello-class
+friction: 0.0                      # unused by anc_only, but required when a battery is set
+avg_speed: 0.3
+max_speed: 0.5
 
 battery:
-  name: 'anc_only'
-  init : 100.0            #%
-  anc_drain : 5.0
-  scale : 1
-  capacity : 71928.0      #J
+  name: anc_only                   # hover power dominates: constant drain, distance is free
+  init: 100.0
+  capacity: 15000.0                # J (≈ 4.2 Wh pack)
+  anc_drain: 19.0                  # W → ≈ 13 min flight
+  scale: 1.0
 
-kinematics: {name: 'omni'}
+controller:
+  name: PPC                        # waypoint follower that ignores obstacles (pure persuit)
+  k_p: 1.0
+  max_speed: 0.5
 
-shape: {name: 'circle',
-        radius: 0.3}
+estimator:
+  name: ekf
+  response_time: 0.3
+  state_noise: 0.02
+  velocity_noise: 0.5
+  gate: null
 
-controller: {name: 'c3bf' ,
-             robot_type: 'omni',
-             safety_margin: 0.05,
-             goal_gain: 0.8
-}
-
-perception_sensors:  # -> DiscoveryMessage.perception_sensors
-  #    - name: 'sim2d_object'
-  #      offset_pose: [0.0, 0.0, 0.0] #x ,y ,z
-  #      offset_angle: [0.0,0.0,0.0] #roll, pitch , jaw
-  #      shape_config:
-  #        name: 'rectangle'
-  #        length: 4.0
-  #        width: 3.0
-      - name: 'aruco'
-        offset_pose: [0.0, 0.0, 0.0] #x ,y ,z
-        offset_angle: [0.0,90,0.0] #roll, pitch , jaw
-        shape_config:
-          name: 'rectangle'
-          length: 20.0
-          width: 10.0
-
-
-
-topics: {action: out, imu : in , wheel_odom: in , pose : in , detections: in } # reverse from agent, for instance
-
-
+topics: {action: out}
+perception_sensors: []
