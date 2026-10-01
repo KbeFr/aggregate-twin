@@ -182,34 +182,6 @@ function footprint(ctx, T, shape, colour) {
   ctx.stroke();
 }
 
-/** Learned sensor reach: body-frame hull drawn at the agent's current pose. */
-function sensorFootprints(ctx, T, list, state) {
-  const k = T.scale;
-  list.forEach(a => {
-    const hull = a.sensor_footprint;
-    if (!Array.isArray(hull) || hull.length < 2 || state.fovHidden.has(a.name)) return;
-    const kind = String(a.kind || 'ugv').toLowerCase();
-    const colour = a.stale ? token('--dim', '#4a5f69') : token(kind.endsWith('uav') ? '--uav' : '--signal');
-    const picked = state.agent === a.name;
-
-    ctx.save();
-    ctx.translate(T.toX(a.x || 0), T.toY(a.y || 0));
-    ctx.rotate(-(a.theta || 0));
-    ctx.beginPath();
-    hull.forEach((p, i) => (i ? ctx.lineTo(p[0] * k, -p[1] * k) : ctx.moveTo(p[0] * k, -p[1] * k)));
-    if (hull.length > 2) {
-      ctx.closePath();
-      ctx.fillStyle = withAlpha(colour, picked ? 0.12 : 0.05);
-      ctx.fill();
-    }
-    ctx.setLineDash([4, 4]);
-    ctx.strokeStyle = withAlpha(colour, picked ? 0.7 : 0.3);
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    ctx.restore();
-  });
-}
-
 function agents(ctx, T, list, state) {
   ctx.font = MONO;
   list.forEach(a => {
@@ -278,7 +250,6 @@ export function createWorldCanvas(canvas, readout, state, { onPick }) {
     T = projection(snap.world, w, h);
     const step = grid(ctx, T, snap.world);
     obstacles(ctx, T, snap.obstacles || []);
-    if (state.showFov) sensorFootprints(ctx, T, snap.agents || [], state);
     agentPaths(ctx, T, snap.agents || [], state);
     missionRoute(ctx, T, snap.missions || [], state);
     goals(ctx, T, snap.missions || [], state.picked);

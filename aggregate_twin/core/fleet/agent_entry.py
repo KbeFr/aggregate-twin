@@ -4,8 +4,6 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
-from aggregate_twin.core.fleet.sensor_footprint import SensorFootprint
-
 from core_msgs.agents_contract import AgentKind, State2D, Velocity2D
 from core_msgs.instance_aggregate.payloads import TwinStatePayload
 
@@ -33,9 +31,6 @@ class AgentEntry:
     mission_id: Optional[str] = None
     last_seen: float = field(default_factory=time.time)
 
-    # -- From obstacle reports: how far its sensors reach, in its own body frame
-    sensor_footprint: SensorFootprint = field(default_factory=SensorFootprint)
-
     def ingest_twin_state(self, payload: TwinStatePayload) -> None:
 
         s = tuple(payload.state)
@@ -49,10 +44,6 @@ class AgentEntry:
         self.arrive_flag = payload.arrive_flag
         self.mission_id = payload.active_mission_id
         self.last_seen = time.time()
-
-    def observe_detection(self, x: float, y: float) -> bool:
-        """The agent reported something at world (x, y): its sensors reach that far."""
-        return self.sensor_footprint.observe((self.state.x, self.state.y, self.state.theta), (x, y))
 
     @property
     def age(self) -> float:

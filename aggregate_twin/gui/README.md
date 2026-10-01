@@ -19,8 +19,6 @@ Open `http://<host>:8082`.
 
 **World sheet.** The map of the world with obstacles, agents drawn as their real footprint, mission goals and routes. On the left is the mission dispatch form; clicking the map sets a goal or adds a waypoint. On the right are live lists of the fleet, missions and obstacles; selecting a row highlights it on the map and shows its route.
 
-Each agent's **sensor fov** is learned from what it reports: every detection outside the dashed hull around the agent grows it, in the agent's own frame, so it moves and turns with the agent. The `sensor fov` button in the map legend switches all of them; `Hide fov` in a fleet row switches one agent.
-
 **Network sheet.** A graph with the aggregate in the center.
 
 - Right half: linked pairs, aggregate → instance → agent, coloured by link health, with animated packets on live links.

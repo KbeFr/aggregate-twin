@@ -47,7 +47,6 @@ def _agents(twin: Any) -> list[dict[str, Any]]:
             "stale": entry.age > stale_after,
             "shape": shape_of(twin.fleet.discovery_of(entry.name), kind),
             "path": route_points(routes.get(entry.name)),
-            "sensor_footprint": entry.sensor_footprint.points,
         })
     return agents
 

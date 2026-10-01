@@ -264,11 +264,6 @@ class AggregateTwin(MessageDispatcher):
             self.logger.warning("Obstacles received from unmapped instance %s", instance_name)
             return
 
-        # Every report, obstacle or agent marker, shows how far the reporter's sensors reach
-        entry = self.fleet.get(agent_name)
-        if entry is not None:
-            entry.observe_detection(msg.x, msg.y)
-
         # A marker on another agent is not an obstacle but a position fix for that agent
         target = self.fleet.agent_name_of(msg.marker_id) if msg.marker_id is not None else None
         if target and target != agent_name:
