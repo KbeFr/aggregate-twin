@@ -88,3 +88,8 @@ aside.pane-l{border-left:0;border-right:1px solid var(--rule)}
 @media (max-width:900px){
   .header-actions{width:100%}
 }
+
+/* --- world: map toggles ---------------------------------------------------*/
+.legend .toggle{padding:1px 7px;font-size:10px;letter-spacing:.1em;text-transform:none;
+  background:transparent;color:var(--muted);border:1px dashed var(--rule)}
+.legend .toggle[aria-pressed="true"]{color:var(--signal);border-color:var(--signal)}
