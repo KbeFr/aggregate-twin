@@ -7,87 +7,18 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
-from typing import Iterable, Sequence
+from typing import Iterable, Sequence, Any
 
 import numpy as np
 from matplotlib.path import Path
 
 from scipy.ndimage import distance_transform_edt, label
 
+from aggregate_twin.core.functions.world_handler import WorldSpec
+
 logger = logging.getLogger(__name__)
 
 
-
-# ══════════════════════════════════════════════════════════════════════════
-# World specification
-# ══════════════════════════════════════════════════════════════════════════
-
-@dataclass(frozen=True)
-class WorldSpec:
-    """Metric extent of the world and its discretisation.
-
-    All world <-> cell conversion goes through this object, so index
-    conventions cannot drift between the cost map and the planner.
-    """
-
-    width: float                 # [m]
-    height: float                # [m]
-    resolution: float            # [m/cell]
-    origin_x: float = 0.0        # [m] world coordinate of cell (0, 0)'s corner
-    origin_y: float = 0.0        # [m]
-
-    def __post_init__(self) -> None:
-        if self.width <= 0 or self.height <= 0:
-            raise ValueError(f"world extent must be positive, got {self.width}x{self.height}")
-        if self.resolution <= 0:
-            raise ValueError(f"resolution must be positive, got {self.resolution}")
-        if self.resolution > min(self.width, self.height) / 4:
-            raise ValueError(
-                f"resolution {self.resolution} m is too coarse for a "
-                f"{self.width}x{self.height} m world"
-            )
-
-    @classmethod
-    def from_tuple(cls, world_specs: Sequence[float], resolution: float) -> "WorldSpec":
-        """Accepts the legacy ``(W, H, ox, oy)`` tuple."""
-        w, h, ox, oy = world_specs
-        return cls(width=float(w), height=float(h), resolution=float(resolution),
-                   origin_x=float(ox), origin_y=float(oy))
-
-    # -- shape ------------------------------------------------------------
-    @property
-    def nx(self) -> int:
-        return max(1, round(self.width / self.resolution))
-
-    @property
-    def ny(self) -> int:
-        return max(1, round(self.height / self.resolution))
-
-    @property
-    def shape(self) -> tuple[int, int]:
-        return self.nx, self.ny
-
-    @property
-    def origin(self) -> tuple[float, float]:
-        return self.origin_x, self.origin_y
-
-    # -- conversion -------------------------------------------------------
-    def world_to_cell(self, x: float, y: float) -> tuple[int, int]:
-        """Cell containing (x, y). May be out of bounds — check in_bounds()."""
-        return (
-            int(math.floor((x - self.origin_x) / self.resolution)),
-            int(math.floor((y - self.origin_y) / self.resolution)),
-        )
-
-    def cell_to_world(self, gx: int, gy: int) -> tuple[float, float]:
-        """Centre of cell (gx, gy). Inverse of world_to_cell up to res/2."""
-        return (
-            self.origin_x + (gx + 0.5) * self.resolution,
-            self.origin_y + (gy + 0.5) * self.resolution,
-        )
-
-    def in_bounds(self, gx: int, gy: int) -> bool:
-        return 0 <= gx < self.nx and 0 <= gy < self.ny
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -96,12 +27,7 @@ class WorldSpec:
 
 @dataclass(frozen=True)
 class ObstacleShape:
-    """Rasterisable obstacle — the aggregate's only obstacle representation.
-
-    Built from :class:`ObstacleObservation` messages. A circle is described by
-    ``radius``; a polygon by world-frame ``polygon`` vertices. When both are
-    present the polygon wins.
-    """
+    """Rasterisable obstacle"""
 
     id: str
     x: float
@@ -142,15 +68,8 @@ class ObstacleShape:
 class GlobalGridMap:
     """Occupancy grid, distance field and traversal cost for the aggregate twin.
 
-    Parameters
-    ----------
-    world :
-        A :class:`WorldSpec`, or the legacy ``(W, H, ox, oy)`` tuple in which
-        case ``resolution`` must also be given.
-    obstacles :
-        Initial obstacle descriptions. Non-dynamic ones form the static layer.
-    resolution :
-        Only used when ``world`` is a legacy tuple.
+    Args:
+        world_config: loaded dict from startup YAML file
 
     Notes
     -----
@@ -173,15 +92,9 @@ class GlobalGridMap:
 
     def __init__(
         self,
-        world: WorldSpec | Sequence[float],
-        obstacles: Iterable = (),
-        resolution: float | None = None,
+        world_config: dict[Any, Any],
     ) -> None:
-        if not isinstance(world, WorldSpec):
-            if resolution is None:
-                raise TypeError("resolution is required when world is a tuple")
-            world = WorldSpec.from_tuple(world, resolution)
-        self.world = world
+        self.world = WorldSpec.from_yaml(world_config)
 
         self._static: np.ndarray = self._blank()
         self._dynamic: np.ndarray = self._blank()
@@ -195,7 +108,7 @@ class GlobalGridMap:
         self._regions: np.ndarray | None = None
         self._cost_cache: dict[tuple, tuple[np.ndarray, np.ndarray]] = {}
 
-        self.set_static_obstacles(obstacles)
+        self.set_static_obstacles(self.world.static_obstacles)
 
 
     # ── geometry delegation ───────────────────────────────────────────────

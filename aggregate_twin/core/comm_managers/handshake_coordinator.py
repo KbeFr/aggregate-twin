@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import time
+from math import inf
 from typing import Any, Callable
 
 from core_msgs.instance_aggregate.handshake import (
@@ -59,6 +60,11 @@ class HandshakeCoordinator:
         self.aggregate_name = aggregate_name
         self.clock = clock
         self.timeout = timeout
+
+        # cooldown between requests to same sender
+        self.request_cooldown = 20
+        self.request_register: dict[tuple[str, str], float] = {}
+
         self.logger = logger or logging.getLogger(self.__class__.__name__)
 
         self.handshakes: dict[str, HandshakeInitiator] = {}
@@ -81,8 +87,17 @@ class HandshakeCoordinator:
             self.logger.debug("%s=%s not requested: %s is engaged", self.kind, subject, target)
             return False
 
+        # Cooldown for request so the agent doesnt jump between
+        if target is not None:
+            key = (subject, target)
+            if self.clock() - self.request_register.get(key, 0.0) < self.request_cooldown:
+                self.logger.debug("%s=%s not requested: %s on cooldown for this subject", self.kind, subject, target)
+                return False
+            self.request_register[key] = self.clock()
+
         handshake = self.initiator_cls(subject, self.aggregate_name, timeout=self.timeout,
                                        clock=self.clock, epoch=self.epochs.get(subject, 0))
+
         self.handshakes[subject] = handshake
         self.outbox.append(handshake.request(payload=payload, target=target))
         self.epochs[subject] = handshake.epoch

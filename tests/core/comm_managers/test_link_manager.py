@@ -109,7 +109,7 @@ class TestDiscoveryDisabledPooled:
     def test_agent_discovery_triggers_pooled_request(
             self, lm_pooled: LinkManager, fleet: FleetRegistry, actions: list
     ):
-        agent_msg = AgentDiscoveryMessage(name="agent_01", kind=AgentKind.UGV)
+        agent_msg = AgentDiscoveryMessage(name="agent_01", kind=AgentKind.UGV, agent_id=0)
         lm_pooled.on_agent_discovered(agent_msg)
 
         assert actions == [
@@ -128,7 +128,7 @@ class TestDiscoveryDisabledPooled:
     def test_instance_accept_links_agent_and_instance(
             self, lm_pooled: LinkManager, fleet: FleetRegistry
     ):
-        agent_msg = AgentDiscoveryMessage(name="agent_01", kind=AgentKind.UGV)
+        agent_msg = AgentDiscoveryMessage(name="agent_01", kind=AgentKind.UGV, agent_id=0)
         lm_pooled.on_agent_discovered(agent_msg)
         req_env = lm_pooled.outbox.pop(0)
 
@@ -152,7 +152,7 @@ class TestDiscoveryEnabledLiveness:
     def test_unlinked_agent_heartbeat_and_staleness_sweep(self, lm_first_free: LinkManager,
                                                           actions: list, clock: FakeClock
     ):
-        agent_msg = AgentDiscoveryMessage(name="agent_01", kind=AgentKind.UGV)
+        agent_msg = AgentDiscoveryMessage(name="agent_01", kind=AgentKind.UGV, agent_id=0)
         lm_first_free.on_agent_discovered(agent_msg)
 
         assert actions == [
@@ -202,44 +202,39 @@ class TestDiscoveryEnabledLiveness:
         assert actions == [(LinkAction.UNSUB_INSTANCE, "instance_01")]
 
 
-    #TODO extend
     def test_instance_rejects_request_returns_to_pool(self, lm_first_free: LinkManager, fleet: FleetRegistry):
-      instance_msg = InstanceDiscoveryMessage(name="instance_01")
-      lm_first_free.on_instance_discovered(instance_msg)
+        instance_msg = InstanceDiscoveryMessage(name="instance_01")
+        lm_first_free.on_instance_discovered(instance_msg)
+        agent_msg = AgentDiscoveryMessage(name="agent_01", kind=AgentKind.UGV, agent_id=0)
+        lm_first_free.on_agent_discovered(agent_msg)
+        req_env = lm_first_free.outbox.pop(0)
+        # Instance NACKs
+        lm_first_free.route(
+            HandshakeEnvelope(
+                id="agent_01",
+                sender="instance_01",
+                handshake_status=HandshakeStatus.NACK,
+                epoch=req_env.epoch,
+            )
+        )
+        # Agent should go back to unlinked or retry, instance freed or handled
+        assert fleet.agent_of("instance_01") is None
+        # TODO make the agent remember which instance already tried and cooldown
 
-      agent_msg = AgentDiscoveryMessage(name="agent_01", kind=AgentKind.UGV)
-      lm_first_free.on_agent_discovered(agent_msg)
-
-      req_env = lm_first_free.outbox.pop(0)
-
-      # Instance NACKs
-      lm_first_free.route(
-          HandshakeEnvelope(
-              id="agent_01",
-              sender="instance_01",
-              handshake_status=HandshakeStatus.NACK,
-              epoch=req_env.epoch,
-          )
-      )
-
-      # Agent should go back to unlinked or retry, instance freed or handled
-      assert fleet.agent_of("instance_01") is None
-
-    #TODO : extend
     def test_handshake_timeout_recovers_agent(self, lm_first_free: LinkManager, clock: FakeClock):
-      lm_first_free.on_instance_discovered(InstanceDiscoveryMessage(name="inst_01"))
-      lm_first_free.on_agent_discovered(
-          AgentDiscoveryMessage(name="agent_01", kind=AgentKind.UGV)
-      )
 
-      assert lm_first_free.in_flight("agent_01") is True
+        lm_first_free.on_instance_discovered(InstanceDiscoveryMessage(name="inst_01"))
+        lm_first_free.on_agent_discovered(
+            AgentDiscoveryMessage(name="agent_01", kind=AgentKind.UGV, agent_id=1)
+        )
+        assert lm_first_free.in_flight("agent_01") is True
 
-      # Advance past initiator timeout (e.g., 5.0s)
-      clock.advance(6.0)
-      lm_first_free.tick()
+        # Advance past initiator timeout (e.g., 5.0s)
+        clock.advance(6.0)
+        lm_first_free.tick()
 
-      # Should no longer be in flight, and should recover/retry
-      assert lm_first_free.in_flight("agent_01") is False
+        # Should no longer be in flight, and should recover/retry
+        assert lm_first_free.in_flight("agent_01") is False
 
 
 class TestAssignmentModes:
@@ -254,7 +249,7 @@ class TestAssignmentModes:
             InstanceDiscoveryMessage(name="instance_02")
         )
 
-        agent_msg = AgentDiscoveryMessage(name="agent_01", kind=AgentKind.UGV)
+        agent_msg = AgentDiscoveryMessage(name="agent_01", kind=AgentKind.UGV,agent_id=0)
         lm_first_free.on_agent_discovered(agent_msg)
 
         assert len(lm_first_free.outbox) == 1
@@ -273,7 +268,7 @@ class TestAssignmentModes:
             InstanceDiscoveryMessage(name="instance_02")
         )
 
-        agent_msg = AgentDiscoveryMessage(name="agent_01", kind=AgentKind.UGV)
+        agent_msg = AgentDiscoveryMessage(name="agent_01", kind=AgentKind.UGV, agent_id=0)
         lm_gui.on_agent_discovered(agent_msg)
 
         # Must stay buffered until GUI operator picks an instance

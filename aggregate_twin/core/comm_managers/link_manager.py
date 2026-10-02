@@ -303,10 +303,10 @@ class LinkManager(HandshakeCoordinator):
 
         for agent_name in self.fleet.stale_instances(self.instance_timeout):
             self.cooldown_check.add(agent_name)
-            self._abandon_receiver(agent_name, "no twin state")
+            self._release_pair(agent_name, "no twin state")
 
         for agent_name in self.fleet.stale_agents(self.agent_timeout):
-            self._abandon_agent(agent_name, "no agent heartbeat")
+            self._release_pair(agent_name, "no agent heartbeat")
 
     def _release_pair(self, agent_name: str, reason: str) -> None:
         if not self.in_flight(agent_name) or self.releasing(agent_name):
@@ -329,8 +329,6 @@ class LinkManager(HandshakeCoordinator):
         for agent_name in self.subjects_on(instance_name):
             self.cancel(agent_name, reason)
         # TODO what if instance comes back after some time, it only knows heartbeat
-
-
 
 
     # ------------------------------------------------------------------

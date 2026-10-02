@@ -33,8 +33,7 @@ class ObstacleRegistry:
         """Drop stale reports, or a moving obstacle smears across the map forever."""
         for reporter, per_id in self._reports.items():
             for oid in [k for k, r in per_id.items()
-                        if r.obs.is_dynamic and now - r.received > self.max_age]:
-                print("PRUNED")
+                        if now - r.received > self.max_age]: # should only be if object is dynamic but no logic for dynamic
                 per_id.pop(oid)
 
     def drop_reporter(self, reporter: str) -> None:

@@ -13,7 +13,6 @@ from aggregate_twin.core.functions.a_star_custom import AStarPlannerCustom
 from aggregate_twin.core.functions.grid_map import GlobalGridMap
 from aggregate_twin.core.functions.mission_planner import MissionPlanner
 from aggregate_twin.core.obstacle_registry import ObstacleRegistry
-from aggregate_twin.core.world_handler import WorldConfig
 from aggregate_twin.utils.config_paths import AGENT_CONFIG_FILES_PATH
 
 from core_msgs.global_msgs.global_payloads import (
@@ -65,15 +64,11 @@ class AggregateTwin(MessageDispatcher):
         self._commands: queue.SimpleQueue[Callable[[], None]] = queue.SimpleQueue()
 
         # --- shared world model ---
-        self.world_config = WorldConfig.from_yaml(world)
         self.fleet = FleetRegistry(clock=self.now)
         self.obstacles = ObstacleRegistry()
 
-        effective_resolution = self.world_config.resolution
         self.grid_map = GlobalGridMap(
-            world=self.world_config.specs,
-            obstacles=[],
-            resolution=effective_resolution,
+            world_config = world,
         )
 
         self.plan_period = 20        # steps between planning passes
@@ -111,7 +106,7 @@ class AggregateTwin(MessageDispatcher):
         self.agent_configs = load_agent_configs(AGENT_CONFIG_FILES_PATH)
 
         self.logger.debug("Init complete. namespace=%s resolution=%.3f loop_freq=%d mode=%s",
-             self.namespace, effective_resolution, loop_freq,
+             self.namespace, self.grid_map.world.resolution, loop_freq,
              self.link_manager.linking_mode.value)
 
     def setup_transport(self, transport):

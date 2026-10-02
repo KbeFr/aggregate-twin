@@ -12,7 +12,7 @@ from aggregate_twin.gui.view_helpers import (
 
 
 def world_state(twin: Any, monitor: Any) -> dict[str, Any]:
-    wc = twin.world_config
+    wc = twin.grid_map.world
     return {
         "twin": header(twin, monitor),
         "review": review_state(twin),
@@ -53,7 +53,7 @@ def _agents(twin: Any) -> list[dict[str, Any]]:
 
 
 def _obstacles(twin: Any) -> list[dict[str, Any]]:
-    found = [obstacle(o, "world") for o in getattr(twin.world_config, "static_obstacles", None) or []]
+    found = [obstacle(o, "world") for o in getattr(twin.grid_map.world, "static_obstacles", None) or []]
     for report in twin.obstacles.all_reports():
         if report.obs is not None and report.reporter is not None:
             found.append(obstacle(report.obs, report.reporter))
